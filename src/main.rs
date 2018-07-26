@@ -9,21 +9,22 @@ extern crate pest_derive;
 use std::io::{self, Write};
 
 use pest::Parser;
-use std::io::{Write};
 
 #[cfg(windows)]
 mod editline {
-    fn readline(param: String) -> Option<String> {
-        print!(param);
-        io::stdout().flush().unwrap_or_else(return None);
-        let mut buffer = String::new();
-        io::stdin().read_line(&mut buffer).unwrap_or_else(return None);
-        return Some(buffer);
-    }
+  fn readline(param: String) -> Option<String> {
+    print!(param);
+    io::stdout().flush().unwrap_or_else(return None);
+    let mut buffer = String::new();
+    io::stdin()
+      .read_line(&mut buffer)
+      .unwrap_or_else(return None);
+    return Some(buffer);
+  }
 
-    fn add_history(history: &String) -> bool {
-        true
-    }
+  fn add_history(history: &String) -> bool {
+    true
+  }
 }
 
 //This is done so we generate a new binary if we modify only the grammar
@@ -35,78 +36,96 @@ const _GRAMMAR: &'static str = include_str!("ownlisp.pest");
 struct OwnlispParser;
 
 #[derive(Debug)]
-enum Operators {
-    Plus,
-    Minus,
-    Times,
-    Divide,
+enum Operator {
+  Plus,
+  Minus,
+  Divide,
+  Multiply,
 }
 
-//Recursive Structure of our AST
-#[derive(Debug)]
-enum Program {
-    Number(i32),
-    Operator(Operators),
-    Expression(Box<Program>),
-}
-
-
-fn consume(pair: pest::iterators::Pair<Rule>) -> Program {
-    println!("{:?}", pair);
-    fn value(pair: pest::iterators::Pair<Rule>) -> Program {
-        let pair = pair.into_inner().next().unwrap();
-
-        match pair.as_rule() {
-            Rule::program => { 
-                Program::Number(0)
-            }
-            Rule::number => {
-                Program::Number(pair.into_span().as_str().parse().unwrap())
-            }
-            Rule::expression => {
-                if pair.into_inner().next().unwrap().as_rule() == Rule::number {
-                    Program::Number(0)
-                } else {
-                    Program::Number(0)
-                }
-            }
-            Rule::operator => {
-                let op = pair.into_inner().next().unwrap().as_str();
-                match op {
-                    "-" => Program::Operator(Operators::Minus),
-                    "+" => Program::Operator(Operators::Plus),
-                    "/" => Program::Operator(Operators::Divide),
-                    "*" => Program::Operator(Operators::Times),
-                    _ => {
-                        unreachable!();
-                    }
-                }
-            }
-            _ => { unreachable!(); }
-        }
+impl Operator {
+  fn parse(string: &str) -> Operator {
+    match string {
+      "-" => Operator::Minus,
+      "+" => Operator::Plus,
+      "*" => Operator::Multiply,
+      "/" => Operator::Divide,
+      _ => panic!("Operator not implemented: {}", string),
     }
+  }
+}
 
-    value(pair)
+#[derive(Debug)]
+enum Expression {
+  Number(i32),
+  Hungarian(Operator, Vec<Expression>),
+}
+
+fn consume(pair: pest::iterators::Pair<Rule>) -> Expression {
+  fn build_ast(pair: pest::iterators::Pair<Rule>) -> Expression {
+    match pair.as_rule() {
+      Rule::program => {
+        let mut pairs = pair.into_inner();
+        let op = Operator::parse(
+          pairs
+            .next()
+            .expect("We expect the program to always start with an op")
+            .as_str(),
+        );
+        let mut children = Vec::new();
+        for pair in pairs {
+          children.push(build_ast(pair));
+        }
+        Expression::Hungarian(op, children)
+      }
+
+      Rule::number => Expression::Number(
+        pair
+          .as_str()
+          .parse()
+          .expect("We expect to only get valid numbers here"),
+      ),
+
+      Rule::expression => {
+        let mut pairs = pair.into_inner();
+        let decider = pairs
+          .next()
+          .expect("We expect expressions to have at least one child");
+        if decider.as_rule() == Rule::number {
+          build_ast(decider)
+        } else {
+          let op = Operator::parse(decider.as_str());
+          let mut children = Vec::new();
+          for pair in pairs {
+            children.push(build_ast(pair));
+          }
+          Expression::Hungarian(op, children)
+        }
+      }
+
+      _ => panic!(),
+    }
+  }
+  build_ast(pair)
 }
 
 fn main() {
-    println!("Ownlisp version 0.0.1");
-    println!("Press Ctrl+c to Exit\n");
+  println!("Ownlisp version 0.0.2");
+  println!("Press Ctrl+c to Exit\n");
 
-
-    loop {
-        match editline::readline("Ownlisp>") {
-            Some(line) => { 
-                editline::add_history(line);
-                let parsed = OwnlispParser::parse(Rule::program, line.trim());
-                if let Ok(mut pairs) = parsed {
-                    let ast = consume(pairs.next().unwrap());
-                    println!("{:?}", ast);
-                } else {
-                    println!("You fucked up boy: {:?}", parsed.unwrap_err());
-                }
-            },
-            None => break
+  loop {
+    match editline::readline("Ownlisp>") {
+      Some(line) => {
+        editline::add_history(line);
+        let parsed = OwnlispParser::parse(Rule::program, line.trim());
+        if let Ok(mut pairs) = parsed {
+          let ast = consume(pairs.next().unwrap());
+          println!("{:?}", ast);
+        } else {
+          println!("You fucked up boy: {:?}", parsed.unwrap_err());
         }
+      }
+      None => break,
     }
+  }
 }
