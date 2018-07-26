@@ -41,6 +41,7 @@ enum Operator {
   Minus,
   Divide,
   Multiply,
+  Remainder,
 }
 
 impl Operator {
@@ -50,6 +51,7 @@ impl Operator {
       "+" => Operator::Plus,
       "*" => Operator::Multiply,
       "/" => Operator::Divide,
+      "%" => Operator::Remainder,
       _ => panic!("Operator not implemented: {}", string),
     }
   }
@@ -66,17 +68,17 @@ fn consume(pair: pest::iterators::Pair<Rule>) -> Expression {
     match pair.as_rule() {
       Rule::program => {
         let mut pairs = pair.into_inner();
-        let op = Operator::parse(
-          pairs
-            .next()
-            .expect("We expect the program to always start with an op")
-            .as_str(),
-        );
-        let mut children = Vec::new();
-        for pair in pairs {
-          children.push(build_ast(pair));
+        let decider = pairs.next().unwrap();
+        if decider.as_rule() == Rule::number {
+          build_ast(decider)
+        } else {
+          let op = Operator::parse(decider.as_str());
+          let mut children = Vec::new();
+          for pair in pairs {
+            children.push(build_ast(pair));
+          }
+          Expression::Hungarian(op, children)
         }
-        Expression::Hungarian(op, children)
       }
 
       Rule::number => Expression::Number(
