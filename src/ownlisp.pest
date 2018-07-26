@@ -1,0 +1,7 @@
+program = {soi ~ operator ~ expression+ ~ eoi}
+expression = {number | ("(" ~ operator ~ expression+ ~ ")")}
+number = @{"-"? ~ digit+}
+operator = {"+" | "-" | "*" | "/"}
+digit = _{'0'..'9'}
+
+whitespace = _{" "}
