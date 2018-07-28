@@ -35,7 +35,7 @@ const _GRAMMAR: &'static str = include_str!("ownlisp.pest");
 #[grammar = "ownlisp.pest"]
 struct OwnlispParser;
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum Operator {
   Plus,
   Minus,
@@ -136,12 +136,20 @@ fn evaluate(program: Expression) -> i64 {
   match program {
     Expression::Number(x) => x as i64,
     Expression::Hungarian(op, values) => {
-      let mut iter = values.into_iter();
-      let mut total = evaluate(iter.next().unwrap());
-      for val in iter {
-        total = apply_op(op, total, evaluate(val));
+      //Special case to handle single - application
+      if op == Operator::Minus && values.len() == 1 {
+        match values[0] {
+          Expression::Number(x) => -x as i64,
+          _ => panic!("Invalid ast"),
+        }
+      } else {
+        let mut iter = values.into_iter();
+        let mut total = evaluate(iter.next().unwrap());
+        for val in iter {
+         total = apply_op(op, total, evaluate(val));
+        }
+        total
       }
-      total
     }
   }
 }
