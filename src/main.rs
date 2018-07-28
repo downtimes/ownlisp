@@ -43,6 +43,8 @@ enum Operator {
   Multiply,
   Remainder,
   Exp,
+  Min,
+  Max,
 }
 
 impl Operator {
@@ -54,6 +56,8 @@ impl Operator {
       "/" => Operator::Divide,
       "%" => Operator::Remainder,
       "^" => Operator::Exp,
+      "min" => Operator::Min,
+      "max" => Operator::Max,
       _ => panic!("Operator not implemented: {}", string),
     }
   }
@@ -68,6 +72,8 @@ fn apply_op(op: Operator, x: i64, y: i64) -> i64 {
     Operator::Remainder => x % y,
     //TODO: Check for if the conversation here is safe.
     Operator::Exp => x.pow(y as u32),
+    Operator::Min => std::cmp::min(x, y),
+    Operator::Max => std::cmp::max(x, y),
   }
 }
 
