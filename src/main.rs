@@ -35,13 +35,14 @@ const _GRAMMAR: &'static str = include_str!("ownlisp.pest");
 #[grammar = "ownlisp.pest"]
 struct OwnlispParser;
 
-#[derive(Debug)]
+#[derive(Debug, Copy, Clone)]
 enum Operator {
   Plus,
   Minus,
   Divide,
   Multiply,
   Remainder,
+  Exp,
 }
 
 impl Operator {
@@ -52,8 +53,21 @@ impl Operator {
       "*" => Operator::Multiply,
       "/" => Operator::Divide,
       "%" => Operator::Remainder,
+      "^" => Operator::Exp,
       _ => panic!("Operator not implemented: {}", string),
     }
+  }
+}
+
+fn apply_op(op: Operator, x: i64, y: i64) -> i64 {
+  match op {
+    Operator::Minus => x - y,
+    Operator::Plus => x + y,
+    Operator::Multiply => x * y,
+    Operator::Divide => x / y,
+    Operator::Remainder => x % y,
+    //TODO: Check for if the conversation here is safe.
+    Operator::Exp => x.pow(y as u32),
   }
 }
 
@@ -111,6 +125,21 @@ fn consume(pair: pest::iterators::Pair<Rule>) -> Expression {
   build_ast(pair)
 }
 
+
+fn evaluate(program: Expression) -> i64 {
+  match program {
+    Expression::Number(x) => x as i64,
+    Expression::Hungarian(op, values) => {
+      let mut iter = values.into_iter();
+      let mut total = evaluate(iter.next().unwrap());
+      for val in iter {
+        total = apply_op(op, total, evaluate(val));
+      }
+      total
+    }
+  }
+}
+
 fn main() {
   println!("Ownlisp version 0.0.2");
   println!("Press Ctrl+c to Exit\n");
@@ -123,6 +152,7 @@ fn main() {
         if let Ok(mut pairs) = parsed {
           let ast = consume(pairs.next().unwrap());
           println!("{:?}", ast);
+          println!("{}", evaluate(ast));
         } else {
           println!("You fucked up boy: {:?}", parsed.unwrap_err());
         }
