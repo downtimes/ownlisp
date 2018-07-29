@@ -10,12 +10,13 @@
             "name": "Debug ownlisp",
             "cargo": {
                 "args": [
-                    "build",
+                    "run",
                     "--bin=ownlisp"
                 ]
             },
             "args": [],
-            "cwd": "${workspaceFolder}"
+            "cwd": "${workspaceFolder}",
+            "terminal": "external",
         },
         {
             "type": "lldb",

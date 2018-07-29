@@ -9,6 +9,7 @@ extern crate pest_derive;
 use std::io::{self, Write};
 
 use pest::Parser;
+use std::fmt::Display;
 
 #[cfg(windows)]
 mod editline {
@@ -34,6 +35,28 @@ const _GRAMMAR: &'static str = include_str!("ownlisp.pest");
 #[derive(Parser)]
 #[grammar = "ownlisp.pest"]
 struct OwnlispParser;
+
+#[derive(Debug, Copy, Clone)]
+enum ErrorKind {
+  DivisonByZero,
+  MissingOperand,
+}
+
+impl Display for ErrorKind {
+  fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+    write!(f, "Error: ").expect("This simple write without formating should never fail");
+    match self {
+      ErrorKind::DivisonByZero => write!(f, "Attempted division by zero"),
+      ErrorKind::MissingOperand => write!(f, "Missing operand for binary operation"),
+    }
+  }
+}
+
+#[derive(Debug, Copy, Clone)]
+enum LVal {
+  Number(i64),
+  Error(ErrorKind),
+}
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
 enum Operator {
@@ -63,17 +86,30 @@ impl Operator {
   }
 }
 
-fn apply_op(op: Operator, x: i64, y: i64) -> i64 {
-  match op {
-    Operator::Minus => x - y,
-    Operator::Plus => x + y,
-    Operator::Multiply => x * y,
-    Operator::Divide => x / y,
-    Operator::Remainder => x % y,
-    //TODO: Check for if the conversation here is safe.
-    Operator::Exp => x.pow(y as u32),
-    Operator::Min => std::cmp::min(x, y),
-    Operator::Max => std::cmp::max(x, y),
+fn apply_op(op: Operator, x: LVal, y: LVal) -> LVal {
+  match (x, y) {
+    (LVal::Number(x), LVal::Number(y)) => {
+      match op {
+        Operator::Minus => LVal::Number(x - y),
+        Operator::Plus => LVal::Number(x + y),
+        Operator::Multiply => LVal::Number(x * y),
+        Operator::Divide => {
+          if y == 0 {
+            LVal::Error(ErrorKind::DivisonByZero)
+          } else {
+            LVal::Number(x / y)
+          }
+        }
+        Operator::Remainder => LVal::Number(x % y),
+        //TODO: Check for if the conversation here is safe.
+        Operator::Exp => LVal::Number(x.pow(y as u32)),
+        Operator::Min => LVal::Number(std::cmp::min(x, y)),
+        Operator::Max => LVal::Number(std::cmp::max(x, y)),
+      }
+    }
+    //If we already had an Error value in one of our operands bubble it up
+    (LVal::Error(_), _) => x,
+    (_, LVal::Error(_)) => y,
   }
 }
 
@@ -131,22 +167,24 @@ fn consume(pair: pest::iterators::Pair<Rule>) -> Expression {
   build_ast(pair)
 }
 
-
-fn evaluate(program: Expression) -> i64 {
+fn evaluate(program: Expression) -> LVal {
   match program {
-    Expression::Number(x) => x as i64,
+    Expression::Number(x) => LVal::Number(x as i64),
     Expression::Hungarian(op, values) => {
       //Special case to handle single - application
       if op == Operator::Minus && values.len() == 1 {
         match values[0] {
-          Expression::Number(x) => -x as i64,
+          Expression::Number(x) => LVal::Number(-x as i64),
           _ => panic!("Invalid ast"),
         }
+      //We found a binary Operator that only had one operand
+      } else if values.len() == 1 && !(op == Operator::Min || op == Operator::Max) {
+        LVal::Error(ErrorKind::MissingOperand)
       } else {
         let mut iter = values.into_iter();
         let mut total = evaluate(iter.next().unwrap());
         for val in iter {
-         total = apply_op(op, total, evaluate(val));
+          total = apply_op(op, total, evaluate(val));
         }
         total
       }
@@ -166,7 +204,11 @@ fn main() {
         if let Ok(mut pairs) = parsed {
           let ast = consume(pairs.next().unwrap());
           println!("{:?}", ast);
-          println!("{}", evaluate(ast));
+          let evaluated = evaluate(ast);
+          match evaluated {
+            LVal::Number(num) => println!("{}", num),
+            LVal::Error(err) => println!("{}", err),
+          }
         } else {
           println!("You fucked up boy: {:?}", parsed.unwrap_err());
         }
