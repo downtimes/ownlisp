@@ -40,18 +40,18 @@ struct OwnlispParser;
 
 #[derive(Debug, Fail)]
 enum EvalError {
-  #[fail(display = "Attempted division by 0")]
+  #[fail(display = "Attempted division by 0.")]
   DivisonByZero,
-  #[fail(display = "Expected an Operand")]
-  MissingOperand,
-  #[fail(display = "Expected an Operator")]
+  #[fail(display = "Expected an Operator.")]
   MissingOperator,
-  #[fail(display = "Operator in the middle of nowhere")]
+  #[fail(display = "Operator in the middle of nowhere.")]
   OperatorPlacement,
-  #[fail(display = "Not a unary Operator")]
+  #[fail(display = "Not a unary Operator.")]
   NotUnary,
-  #[fail(display = "Wrong usage of unary Oparator. They only work on numbers")]
-  WrongUnary
+  #[fail(display = "Wrong usage of unary Oparator. They only work on numbers.")]
+  WrongUnary,
+  #[fail(display = "Operators need an Operand to work on.")]
+  NoOperand
 }
 
 
@@ -62,7 +62,7 @@ enum LVal {
   EmptyProgram,
 }
 
-#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum Operator {
   Plus,
   Minus,
@@ -118,7 +118,7 @@ fn apply_op(op: Operator, x: LVal, y: LVal) -> LVal {
   }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 enum SExpression {
   Number(i32),
   Operator(Operator),
@@ -158,46 +158,64 @@ fn consume(pair: pest::iterators::Pair<Rule>) -> SExpression {
   build_ast(pair)
 }
 
+//TODO: the cloning of SExpressions here is extremely bad for performance
+//look into how we can handle it without needing to clone stuff
+//somehow we need to spli the first element out of the iterator and get a 
+//iterator of the remaining rest
 fn evaluate(program: SExpression) -> LVal {
   match program {
     SExpression::Number(x) => LVal::Number(x as i64),
     SExpression::Operator(_) => LVal::Error(EvalError::OperatorPlacement),
     SExpression::Children(values) => {
-      if let Some(first) = values.iter().next() {
+      let mut values = values.into_iter().peekable();
+      if let Some(first) = values.next() {
         match first {
           //we have an operand at the first position
-          SExpression::Operator(ref op) => {
-            let operands = values.iter().skip(1).collect::<Vec<_>>();
-            if operands.len() == 1 {
-              if let SExpression::Number(x) = operands[0] {
-                if *op == Operator::Minus {
-                  LVal::Number(-(*x) as i64)
-                } else if *op == Operator::Max || *op == Operator::Min {
-                  LVal::Number(*x as i64)
+          SExpression::Operator(op) => {
+            let first_operand = values.next();
+            match first_operand {
+              Some(operand) => {
+                let mut total = evaluate(operand);
+                //We only have one operand so check if it's an operator that 
+                //works unary
+                if let None = values.peek() {
+                  //Check that we have a number as operand
+                  if let LVal::Number(num) = total {
+                    match op {
+                      Operator::Minus => {
+                        LVal::Number(-num)
+                      }
+
+                      Operator::Max | Operator::Min => {
+                        LVal::Number(num)
+                      }
+
+                      _ => LVal::Error(EvalError::NotUnary)
+                    }
+                  } else {
+                    LVal::Error(EvalError::WrongUnary)
+                  }
                 } else {
-                  LVal::Error(EvalError::NotUnary)
+                  for val in values {
+                    total = apply_op(op.clone(), total, evaluate(val));
+                  }
+                  total
                 }
-              } else {
-                LVal::Error(EvalError::WrongUnary)
               }
-            } else {
-              let mut total = evaluate(operands[0].clone());
-              for &val in operands.iter().skip(1) {
-                total = apply_op(*op, total, evaluate(val.clone()));
-              }
-              total
+              None => LVal::Error(EvalError::NoOperand)
             }
           }
-          //We don't have an operand at the firs positio
+
+          //We have no Operator on the first position that's only okay if
+          //We have no other values in the vector!
           _ => {
-            //That's onyl okay if it is a single number or a single vec
-            //and we can evaluate theese like normal
-            if values.len() == 1 {
-              evaluate(first.clone())
+            if values.len() == 0 {
+              evaluate(first)
             } else {
               LVal::Error(EvalError::MissingOperator)
             }
           }
+
         }
       } else {
         LVal::EmptyProgram
@@ -214,6 +232,9 @@ fn main() {
     match editline::readline("Ownlisp>") {
       Some(line) => {
         editline::add_history(line);
+        if line == "exit" {
+          break
+        }
         let parsed = OwnlispParser::parse(Rule::program, line.trim());
         if let Ok(mut pairs) = parsed {
           let program = consume(pairs.next().unwrap());
