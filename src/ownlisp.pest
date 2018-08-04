@@ -1,5 +1,6 @@
-program = {soi ~ (number | operator ~ expression+) ~ eoi}
-expression = {number | ("(" ~ operator ~ expression+ ~ ")")}
+program = {soi ~ (number | ( operator ~ expression+ ))? ~ eoi}
+sexpression = { "(" ~ expression* ~ ")" }
+expression = { number | operator | sexpression }
 number = @{"-"? ~ digit+}
 operator = {"+" | "-" | "*" | "/" | "%" | "^" | "min" | "max" }
 digit = _{'0'..'9'}

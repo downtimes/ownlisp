@@ -9,3 +9,4 @@ editline = { path = "editline" }
 [dependencies]
 pest = "~1.0"
 pest_derive = "~1.0"
+failure = "~0.1"

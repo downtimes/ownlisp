@@ -4,12 +4,13 @@ extern crate editline;
 extern crate pest;
 #[macro_use]
 extern crate pest_derive;
+#[macro_use]
+extern crate failure;
 
 #[cfg(windows)]
 use std::io::{self, Write};
 
 use pest::Parser;
-use std::fmt::Display;
 
 #[cfg(windows)]
 mod editline {
@@ -36,26 +37,29 @@ const _GRAMMAR: &'static str = include_str!("ownlisp.pest");
 #[grammar = "ownlisp.pest"]
 struct OwnlispParser;
 
-#[derive(Debug, Copy, Clone)]
-enum ErrorKind {
+
+#[derive(Debug, Fail)]
+enum EvalError {
+  #[fail(display = "Attempted division by 0")]
   DivisonByZero,
+  #[fail(display = "Expected an Operand")]
   MissingOperand,
+  #[fail(display = "Expected an Operator")]
+  MissingOperator,
+  #[fail(display = "Operator in the middle of nowhere")]
+  OperatorPlacement,
+  #[fail(display = "Not a unary Operator")]
+  NotUnary,
+  #[fail(display = "Wrong usage of unary Oparator. They only work on numbers")]
+  WrongUnary
 }
 
-impl Display for ErrorKind {
-  fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-    write!(f, "Error: ").expect("This simple write without formating should never fail");
-    match self {
-      ErrorKind::DivisonByZero => write!(f, "Attempted division by zero"),
-      ErrorKind::MissingOperand => write!(f, "Missing operand for binary operation"),
-    }
-  }
-}
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug)]
 enum LVal {
   Number(i64),
-  Error(ErrorKind),
+  Error(EvalError),
+  EmptyProgram,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]
@@ -81,7 +85,7 @@ impl Operator {
       "^" => Operator::Exp,
       "min" => Operator::Min,
       "max" => Operator::Max,
-      _ => panic!("Operator not implemented: {}", string),
+      _ => panic!("Unknown operator"),
     }
   }
 }
@@ -95,7 +99,7 @@ fn apply_op(op: Operator, x: LVal, y: LVal) -> LVal {
         Operator::Multiply => LVal::Number(x * y),
         Operator::Divide => {
           if y == 0 {
-            LVal::Error(ErrorKind::DivisonByZero)
+            LVal::Error(EvalError::DivisonByZero)
           } else {
             LVal::Number(x / y)
           }
@@ -108,87 +112,97 @@ fn apply_op(op: Operator, x: LVal, y: LVal) -> LVal {
       }
     }
     //If we already had an Error value in one of our operands bubble it up
-    (LVal::Error(_), _) => x,
-    (_, LVal::Error(_)) => y,
+    (LVal::Error(x), _) => LVal::Error(x),
+    (_, LVal::Error(y)) => LVal::Error(y),
+    (_, _) => LVal::EmptyProgram,
   }
 }
 
-#[derive(Debug)]
-enum Expression {
+#[derive(Debug, Clone)]
+enum SExpression {
   Number(i32),
-  Hungarian(Operator, Vec<Expression>),
+  Operator(Operator),
+  Children(Vec<SExpression>),
 }
 
-fn consume(pair: pest::iterators::Pair<Rule>) -> Expression {
-  fn build_ast(pair: pest::iterators::Pair<Rule>) -> Expression {
+fn consume(pair: pest::iterators::Pair<Rule>) -> SExpression {
+  fn build_ast(pair: pest::iterators::Pair<Rule>) -> SExpression {
     match pair.as_rule() {
-      Rule::program => {
-        let mut pairs = pair.into_inner();
-        let decider = pairs.next().unwrap();
-        if decider.as_rule() == Rule::number {
-          build_ast(decider)
-        } else {
-          let op = Operator::parse(decider.as_str());
-          let mut children = Vec::new();
-          for pair in pairs {
-            children.push(build_ast(pair));
-          }
-          Expression::Hungarian(op, children)
-        }
-      }
-
-      Rule::number => Expression::Number(
+      Rule::number => SExpression::Number(
         pair
           .as_str()
           .parse()
           .expect("We expect to only get valid numbers here"),
       ),
 
-      Rule::expression => {
-        let mut pairs = pair.into_inner();
-        let decider = pairs
-          .next()
-          .expect("We expect expressions to have at least one child");
-        if decider.as_rule() == Rule::number {
-          build_ast(decider)
-        } else {
-          let op = Operator::parse(decider.as_str());
-          let mut children = Vec::new();
-          for pair in pairs {
-            children.push(build_ast(pair));
-          }
-          Expression::Hungarian(op, children)
-        }
+      Rule::operator => SExpression::Operator(
+        Operator::parse(pair.as_str())
+      ),
+
+      Rule::sexpression => {
+        let res = pair.into_inner().map(|pair| build_ast(pair)).collect();
+        SExpression::Children(res)
       }
 
-      _ => panic!(),
+      Rule::expression => {
+        build_ast(pair.into_inner().next().expect("Expressions always consist of one item"))
+      }
+
+      Rule::program => { 
+        SExpression::Children(pair.into_inner().map(|pair| build_ast(pair)).collect())
+      }
+
+      _ => panic!("Unknown parsing rule encountered"),
     }
   }
   build_ast(pair)
 }
 
-fn evaluate(program: Expression) -> LVal {
+fn evaluate(program: SExpression) -> LVal {
   match program {
-    Expression::Number(x) => LVal::Number(x as i64),
-    Expression::Hungarian(op, values) => {
-      //Special case to handle single - application
-      if op == Operator::Minus && values.len() == 1 {
-        match values[0] {
-          Expression::Number(x) => LVal::Number(-x as i64),
-          _ => panic!("Invalid ast"),
+    SExpression::Number(x) => LVal::Number(x as i64),
+    SExpression::Operator(_) => LVal::Error(EvalError::OperatorPlacement),
+    SExpression::Children(values) => {
+      if let Some(first) = values.iter().next() {
+        match first {
+          //we have an operand at the first position
+          SExpression::Operator(ref op) => {
+            let operands = values.iter().skip(1).collect::<Vec<_>>();
+            if operands.len() == 1 {
+              if let SExpression::Number(x) = operands[0] {
+                if *op == Operator::Minus {
+                  LVal::Number(-(*x) as i64)
+                } else if *op == Operator::Max || *op == Operator::Min {
+                  LVal::Number(*x as i64)
+                } else {
+                  LVal::Error(EvalError::NotUnary)
+                }
+              } else {
+                LVal::Error(EvalError::WrongUnary)
+              }
+            } else {
+              let mut total = evaluate(operands[0].clone());
+              for &val in operands.iter().skip(1) {
+                total = apply_op(*op, total, evaluate(val.clone()));
+              }
+              total
+            }
+          }
+          //We don't have an operand at the firs positio
+          _ => {
+            //That's onyl okay if it is a single number or a single vec
+            //and we can evaluate theese like normal
+            if values.len() == 1 {
+              evaluate(first.clone())
+            } else {
+              LVal::Error(EvalError::MissingOperator)
+            }
+          }
         }
-      //We found a binary Operator that only had one operand
-      } else if values.len() == 1 && !(op == Operator::Min || op == Operator::Max) {
-        LVal::Error(ErrorKind::MissingOperand)
       } else {
-        let mut iter = values.into_iter();
-        let mut total = evaluate(iter.next().unwrap());
-        for val in iter {
-          total = apply_op(op, total, evaluate(val));
-        }
-        total
+        LVal::EmptyProgram
       }
-    }
+    },
   }
 }
 
@@ -202,15 +216,16 @@ fn main() {
         editline::add_history(line);
         let parsed = OwnlispParser::parse(Rule::program, line.trim());
         if let Ok(mut pairs) = parsed {
-          let ast = consume(pairs.next().unwrap());
-          println!("{:?}", ast);
-          let evaluated = evaluate(ast);
+          let program = consume(pairs.next().unwrap());
+          println!("{:?}", program);
+          let evaluated = evaluate(program);
           match evaluated {
             LVal::Number(num) => println!("{}", num),
             LVal::Error(err) => println!("{}", err),
+            LVal::EmptyProgram => println!("{}", "{}"),
           }
         } else {
-          println!("You fucked up boy: {:?}", parsed.unwrap_err());
+          println!("Syntax error: {:?}", parsed.unwrap_err());
         }
       }
       None => break,
