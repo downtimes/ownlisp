@@ -207,7 +207,7 @@ fn evaluate(program: SExpression) -> LVal {
 }
 
 fn main() {
-  println!("Ownlisp version 0.0.2");
+  println!("Ownlisp version 0.0.3");
   println!("Press Ctrl+c to Exit\n");
 
   loop {
@@ -222,7 +222,7 @@ fn main() {
           match evaluated {
             LVal::Number(num) => println!("{}", num),
             LVal::Error(err) => println!("{}", err),
-            LVal::EmptyProgram => println!("{}", "{}"),
+            LVal::EmptyProgram => println!("{}", "()")
           }
         } else {
           println!("Syntax error: {:?}", parsed.unwrap_err());
