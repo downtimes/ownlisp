@@ -11,6 +11,17 @@ extern crate failure;
 use std::io::{self, Write};
 
 use pest::Parser;
+use std::collections::VecDeque;
+
+const OP_MIN: &str = "min";
+const OP_MAX: &str = "max";
+const OP_PLUS: &str = "+";
+const OP_MINUS: &str = "-";
+const OP_EXP: &str = "^";
+const OP_MULT: &str = "*";
+const OP_DIV: &str = "/";
+const OP_REM: &str = "rem";
+
 
 #[cfg(windows)]
 mod editline {
@@ -37,29 +48,45 @@ const _GRAMMAR: &'static str = include_str!("ownlisp.pest");
 #[grammar = "ownlisp.pest"]
 struct OwnlispParser;
 
-
-#[derive(Debug, Fail)]
-enum EvalError {
-  #[fail(display = "Attempted division by 0.")]
-  DivisonByZero,
-  #[fail(display = "Expected an Operator.")]
-  MissingOperator,
-  #[fail(display = "Operator in the middle of nowhere.")]
-  OperatorPlacement,
-  #[fail(display = "Not a unary Operator.")]
-  NotUnary,
-  #[fail(display = "Wrong usage of unary Oparator. They only work on numbers.")]
-  WrongUnary,
-  #[fail(display = "Operators need an Operand to work on.")]
-  NoOperand
+#[derive(Debug)]
+enum Ast {
+  Program(Vec<Ast>),
+  Number(i64),
+  Operator(Operator),
+  SExpression(VecDeque<Ast>),
+  QExpression(VecDeque<Ast>),
+  Error(failure::Error),
+  EmptyProgram,
 }
 
-
-#[derive(Debug)]
-enum LVal {
-  Number(i64),
-  Error(EvalError),
-  EmptyProgram,
+impl std::fmt::Display for Ast {
+  fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+    match self {
+      Ast::Program(prog) => {
+        let mut res = write!(f, "(");
+        for idx in 0..prog.len() - 1 {
+          res = res.and(write!(f, "{} ", prog[idx]));
+        }
+        res = res.and(write!(f, "{})", prog[prog.len() - 1]));
+        res
+      }
+      Ast::Number(num) => write!(f, "{}", num),
+      Ast::Operator(op) => write!(f, "{}", op),
+      Ast::Error(err) => write!(f, "{}", err),
+      Ast::SExpression(values) | Ast::QExpression(values) => {
+        let mut res = write!(f, "(");
+        if values.len() > 0 {
+          for idx in 0..values.len() - 1 {
+            res = res.and(write!(f, "{} ", values[idx]));
+          }
+          res = res.and(write!(f, "{}", values[values.len() - 1]));
+        }
+        res = res.and(write!(f, ")"));
+        res
+      }
+      Ast::EmptyProgram => write!(f, "()"),
+    }
+  }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,82 +101,102 @@ enum Operator {
   Max,
 }
 
-impl Operator {
-  fn parse(string: &str) -> Operator {
-    match string {
-      "-" => Operator::Minus,
-      "+" => Operator::Plus,
-      "*" => Operator::Multiply,
-      "/" => Operator::Divide,
-      "%" => Operator::Remainder,
-      "^" => Operator::Exp,
-      "min" => Operator::Min,
-      "max" => Operator::Max,
-      _ => panic!("Unknown operator"),
+impl std::fmt::Display for Operator {
+  fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {  
+    match self {
+      Operator::Plus => write!(f, "{}", OP_PLUS),
+      Operator::Minus => write!(f, "{}", OP_MINUS),
+      Operator::Divide => write!(f, "{}", OP_DIV),
+      Operator::Multiply => write!(f, "{}", OP_MULT),
+      Operator::Remainder => write!(f, "{}", OP_REM),
+      Operator::Exp => write!(f, "{}", OP_EXP),
+      Operator::Min => write!(f, "{}", OP_MIN),
+      Operator::Max => write!(f, "{}", OP_MAX),
     }
-  }
-}
-
-fn apply_op(op: Operator, x: LVal, y: LVal) -> LVal {
-  match (x, y) {
-    (LVal::Number(x), LVal::Number(y)) => {
-      match op {
-        Operator::Minus => LVal::Number(x - y),
-        Operator::Plus => LVal::Number(x + y),
-        Operator::Multiply => LVal::Number(x * y),
-        Operator::Divide => {
-          if y == 0 {
-            LVal::Error(EvalError::DivisonByZero)
-          } else {
-            LVal::Number(x / y)
-          }
-        }
-        Operator::Remainder => LVal::Number(x % y),
-        //TODO: Check for if the conversation here is safe.
-        Operator::Exp => LVal::Number(x.pow(y as u32)),
-        Operator::Min => LVal::Number(std::cmp::min(x, y)),
-        Operator::Max => LVal::Number(std::cmp::max(x, y)),
-      }
-    }
-    //If we already had an Error value in one of our operands bubble it up
-    (LVal::Error(x), _) => LVal::Error(x),
-    (_, LVal::Error(y)) => LVal::Error(y),
-    (_, _) => LVal::EmptyProgram,
   }
 }
 
 #[derive(Debug)]
-enum SExpression {
-  Number(i32),
-  Operator(Operator),
-  Children(Vec<SExpression>),
+struct ParseOperatorError;
+
+impl std::str::FromStr for Operator { 
+  type Err = ParseOperatorError;
+
+  fn from_str(s: &str) -> Result<Self, Self::Err> {
+    match s {
+      OP_MINUS => Ok(Operator::Minus),
+      OP_PLUS => Ok(Operator::Plus),
+      OP_MULT => Ok(Operator::Multiply),
+      OP_DIV => Ok(Operator::Divide),
+      OP_REM => Ok(Operator::Remainder),
+      OP_EXP => Ok(Operator::Exp),
+      OP_MIN => Ok(Operator::Min),
+      OP_MAX => Ok(Operator::Max),
+      _ => Err(ParseOperatorError),
+    }
+  }
 }
 
-fn consume(pair: pest::iterators::Pair<Rule>) -> SExpression {
-  fn build_ast(pair: pest::iterators::Pair<Rule>) -> SExpression {
+fn apply_op(op: Operator, x: Ast, y: Ast) -> Ast {
+  match (x, y) {
+    (Ast::Number(x), Ast::Number(y)) => {
+      match op {
+        Operator::Minus => Ast::Number(x - y),
+        Operator::Plus => Ast::Number(x + y),
+        Operator::Multiply => Ast::Number(x * y),
+        Operator::Divide => {
+          if y == 0 {
+            Ast::Error(format_err!("Attempted division by 0."))
+          } else {
+            Ast::Number(x / y)
+          }
+        }
+        Operator::Remainder => Ast::Number(x % y),
+        //TODO: Check for if the conversation here is safe.
+        Operator::Exp => Ast::Number(x.pow(y as u32)),
+        Operator::Min => Ast::Number(std::cmp::min(x, y)),
+        Operator::Max => Ast::Number(std::cmp::max(x, y)),
+      }
+    }
+    //If we already had an Error value in one of our jperands bubble it up
+    (Ast::Error(x), _) | (_, Ast::Error(x)) => Ast::Error(x),
+    (Ast::EmptyProgram, _) | (_, Ast::EmptyProgram) => Ast::EmptyProgram,
+    _ => panic!(
+      "Apply op called with SExpression or QEXpression."
+    ),
+  }
+}
+
+fn build_custom_ast(pair: pest::iterators::Pair<Rule>) -> Ast {
+  fn build_ast(pair: pest::iterators::Pair<Rule>) -> Ast {
     match pair.as_rule() {
-      Rule::number => SExpression::Number(
+      Rule::number => Ast::Number(
         pair
           .as_str()
           .parse()
           .expect("We expect to only get valid numbers here"),
       ),
 
-      Rule::operator => SExpression::Operator(
-        Operator::parse(pair.as_str())
-      ),
+      Rule::operator => Ast::Operator(pair.as_str().parse().expect("Unknown operator encountered")),
 
       Rule::sexpression => {
         let res = pair.into_inner().map(|pair| build_ast(pair)).collect();
-        SExpression::Children(res)
+        Ast::SExpression(res)
       }
 
-      Rule::expression => {
-        build_ast(pair.into_inner().next().expect("Expressions always consist of one item"))
-      }
+      Rule::expression => build_ast(
+        pair
+          .into_inner()
+          .next()
+          .expect("Expressions always consist of one item"),
+      ),
 
-      Rule::program => { 
-        SExpression::Children(pair.into_inner().map(|pair| build_ast(pair)).collect())
+      Rule::program => {
+        let mut pairs = pair.into_inner().peekable();
+        match pairs.peek() {
+          Some(_) => Ast::Program(pairs.map(|pair| build_ast(pair)).collect()),
+          None => Ast::EmptyProgram,
+        }
       }
 
       _ => panic!("Unknown parsing rule encountered"),
@@ -158,69 +205,76 @@ fn consume(pair: pest::iterators::Pair<Rule>) -> SExpression {
   build_ast(pair)
 }
 
-//TODO: the cloning of SExpressions here is extremely bad for performance
-//look into how we can handle it without needing to clone stuff
-//somehow we need to spli the first element out of the iterator and get a 
-//iterator of the remaining rest
-fn evaluate(program: SExpression) -> LVal {
-  match program {
-    SExpression::Number(x) => LVal::Number(x as i64),
-    SExpression::Operator(_) => LVal::Error(EvalError::OperatorPlacement),
-    SExpression::Children(values) => {
-      let mut values = values.into_iter().peekable();
-      if let Some(first) = values.next() {
-        match first {
-          //we have an operand at the first position
-          SExpression::Operator(op) => {
-            let first_operand = values.next();
-            match first_operand {
-              Some(operand) => {
-                let mut total = evaluate(operand);
-                //We only have one operand so check if it's an operator that 
-                //works unary
-                if let None = values.peek() {
-                  //Check that we have a number as operand
-                  if let LVal::Number(num) = total {
-                    match op {
-                      Operator::Minus => {
-                        LVal::Number(-num)
-                      }
+fn evaluate_sexpression(sexp: VecDeque<Ast>) -> Ast {
+  let mut values = sexp.into_iter().peekable();
+  if let Some(first) = values.next() {
+    match first {
+      //we have an operand at the first position
+      Ast::Operator(op) => {
+        let first_operand = values.next();
+        match first_operand {
+          Some(operand) => {
+            let mut total = evaluate(operand);
+            //We only have one operand so check if it's an operator that
+            //works unary
+            if let None = values.peek() {
+              //Check that we have a number as operand
+              if let Ast::Number(num) = total {
+                match op {
+                  Operator::Minus => Ast::Number(-num),
 
-                      Operator::Max | Operator::Min => {
-                        LVal::Number(num)
-                      }
+                  Operator::Max | Operator::Min => Ast::Number(num),
 
-                      _ => LVal::Error(EvalError::NotUnary)
-                    }
-                  } else {
-                    LVal::Error(EvalError::WrongUnary)
-                  }
-                } else {
-                  for val in values {
-                    total = apply_op(op.clone(), total, evaluate(val));
-                  }
-                  total
+                  _ => Ast::Error(format_err!(
+                    "The operator {} is not an unary Operator.",
+                    op
+                  )),
                 }
+              } else {
+                Ast::Error(format_err!("Unary oprands can only operate on numbers."))
               }
-              None => LVal::Error(EvalError::NoOperand)
-            }
-          }
-
-          //We have no Operator on the first position that's only okay if
-          //We have no other values in the vector!
-          _ => {
-            if values.len() == 0 {
-              evaluate(first)
             } else {
-              LVal::Error(EvalError::MissingOperator)
+              for val in values {
+                total = apply_op(op.clone(), total, evaluate(val));
+              }
+              total
             }
           }
-
+          None => Ast::Error(format_err!(
+            "The first element of a S-Expression needs to be an operator.",
+          )),
         }
-      } else {
-        LVal::EmptyProgram
       }
-    },
+
+      //We have no Operator on the first position that's only okay if
+      //We have no other values in the vector!
+      _ => {
+        if values.len() == 0 {
+          evaluate(first)
+        } else {
+          Ast::Error(format_err!(
+            "The first element of a S-Expression needs to be an operator."
+          ))
+        }
+      }
+    }
+  } else {
+    Ast::EmptyProgram
+  }
+}
+
+fn evaluate(program: Ast) -> Ast {
+  match program {
+    Ast::Program(expressions) => {
+      //TODO: think of something more elegant here
+      evaluate(Ast::SExpression(expressions.into_iter().collect()))
+    }
+    Ast::Number(_) => program,
+    Ast::Operator(_) => Ast::Error(format_err!(
+      "Operator placed in invalid position. Operators are only allowed at the first position."
+    )),
+    Ast::SExpression(values) => evaluate_sexpression(values),
+    _ => Ast::Error(format_err!("Unimplemented evaluation attempted.")),
   }
 }
 
@@ -233,18 +287,14 @@ fn main() {
       Some(line) => {
         editline::add_history(line);
         if line == "exit" {
-          break
+          break;
         }
         let parsed = OwnlispParser::parse(Rule::program, line.trim());
         if let Ok(mut pairs) = parsed {
-          let program = consume(pairs.next().unwrap());
-          println!("{:?}", program);
+          let program = build_custom_ast(pairs.next().unwrap());
+          println!("{}", program);
           let evaluated = evaluate(program);
-          match evaluated {
-            LVal::Number(num) => println!("{}", num),
-            LVal::Error(err) => println!("{}", err),
-            LVal::EmptyProgram => println!("{}", "()")
-          }
+          println!("{}", evaluated);
         } else {
           println!("Syntax error: {:?}", parsed.unwrap_err());
         }
