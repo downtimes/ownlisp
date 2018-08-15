@@ -5,6 +5,18 @@
     "version": "0.2.0",
     "configurations": [
         {
+            "preLaunchTask": "cargo build",
+            "name": "(Windows) Launch",
+            "type": "cppvsdbg",
+            "request": "launch",
+            "program": "/ownlisp.exe",
+            "args": [],
+            "stopAtEntry": false,
+            "cwd": "${workspaceFolder}",
+            "environment": [],
+            "externalConsole": true
+        },
+        {
             "type": "lldb",
             "request": "launch",
             "name": "Debug ownlisp",
