@@ -3,6 +3,10 @@ name = "ownlisp"
 version = "0.1.0"
 authors = ["Michael Auracher <michael.auracher@gmail.com>"]
 
+[profile.dev]
+opt-level = 0
+debug = true
+
 [target.'cfg(unix)'.dependencies]
 editline = { path = "editline" }
 

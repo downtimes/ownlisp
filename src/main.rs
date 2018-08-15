@@ -9,9 +9,6 @@ extern crate pest_derive;
 #[macro_use]
 extern crate failure;
 
-#[cfg(windows)]
-use std::io::{self, Write};
-
 use pest::Parser;
 use std::collections::VecDeque;
 
@@ -32,24 +29,31 @@ const OP_LEN: &str = "len";
 
 #[cfg(windows)]
 mod editline {
-  fn readline(param: String) -> Option<String> {
-    print!(param);
-    io::stdout().flush().unwrap_or_else(return None);
+  use std::io::{self, Write};
+
+  pub(crate) fn readline(param: &str) -> Option<String> {
+    print!("{}", param);
+    if io::stdout().flush().is_err() {
+      return None;
+    }
     let mut buffer = String::new();
-    io::stdin()
-      .read_line(&mut buffer)
-      .unwrap_or_else(return None);
-    return Some(buffer);
+    if io::stdin().read_line(&mut buffer).is_err() {
+      return None;
+    }
+    let old_len = buffer.len();
+    //Strip the newline from the end
+    buffer.truncate(old_len - 2);
+    Some(buffer)
   }
 
-  fn add_history(history: &String) -> bool {
+  pub(crate) fn add_history(_history: &str) -> bool {
     true
   }
 }
 
 //This is done so we generate a new binary if we modify only the grammar
 #[cfg(debug_assertions)]
-const _GRAMMAR: &'static str = include_str!("ownlisp.pest");
+const _GRAMMAR: &str = include_str!("ownlisp.pest");
 
 #[derive(Parser)]
 #[grammar = "ownlisp.pest"]
@@ -87,29 +91,28 @@ impl std::fmt::Display for Ast {
       Ast::Operator(op) => write!(f, "{}", op),
       Ast::SExpression(values) => {
         let mut res = write!(f, "(");
-        //We need special casing for the last element to not print it with the
-        //space after. So we need to check we actually have elements and our
-        //calculation of the last element index is valid.
-        if values.len() > 0 {
-          for idx in 0..values.len() - 1 {
-            res = res.and(write!(f, "{} ", values[idx]));
+        let mut iter = values.into_iter().peekable();
+        while let Some(item) = iter.next() {
+          if iter.peek().is_some() {
+            res = res.and(write!(f, "{} ", item));
+          } else {
+            res = res.and(write!(f, "{}", item));
           }
-          res = res.and(write!(f, "{}", values[values.len() - 1]));
         }
         res = res.and(write!(f, ")"));
         res
       }
       Ast::QExpression(values) => {
-        let mut res = write!(f, "{}", "{");
-        //Same as with the branch above for SExpression. Special casing for last
-        //element makes code a little ugly.
-        if values.len() > 0 {
-          for idx in 0..values.len() - 1 {
-            res = res.and(write!(f, "{} ", values[idx]));
+        let mut res = write!(f, "{{");
+        let mut iter = values.into_iter().peekable();
+        while let Some(item) = iter.next() {
+          if iter.peek().is_some() {
+            res = res.and(write!(f, "{} ", item));
+          } else {
+            res = res.and(write!(f, "{}", item));
           }
-          res = res.and(write!(f, "{}", values[values.len() - 1]));
         }
-        res = res.and(write!(f, "{}", "}"));
+        res = res.and(write!(f, "}}"));
         res
       }
       Ast::EmptyProgram => write!(f, "()"),
@@ -183,10 +186,10 @@ impl std::str::FromStr for Operator {
   }
 }
 
-fn apply_op(op: Operator, x: Ast, y: Ast) -> Result<Ast, failure::Error> {
+fn apply_op(op: &Operator, x: Ast, y: Ast) -> Result<Ast, failure::Error> {
   match (x, y) {
     (Ast::Number(x), Ast::Number(y)) => {
-      match op {
+      match *op {
         Operator::Minus => Ok(Ast::Number(x - y)),
         Operator::Plus => Ok(Ast::Number(x + y)),
         Operator::Multiply => Ok(Ast::Number(x * y)),
@@ -222,12 +225,12 @@ fn build_custom_ast(pair: pest::iterators::Pair<Rule>) -> Ast {
       Rule::operator => Ast::Operator(pair.as_str().parse().expect("Unknown operator encountered")),
 
       Rule::sexpression => {
-        let res = pair.into_inner().map(|pair| build_ast(pair)).collect();
+        let res = pair.into_inner().map(build_ast).collect();
         Ast::SExpression(res)
       }
 
       Rule::qexpression => {
-        let res = pair.into_inner().map(|pair| build_ast(pair)).collect();
+        let res = pair.into_inner().map(build_ast).collect();
         Ast::QExpression(res)
       }
 
@@ -241,7 +244,7 @@ fn build_custom_ast(pair: pest::iterators::Pair<Rule>) -> Ast {
       Rule::program => {
         let mut pairs = pair.into_inner().peekable();
         match pairs.peek() {
-          Some(_) => Ast::SExpression(pairs.map(|pair| build_ast(pair)).collect()),
+          Some(_) => Ast::SExpression(pairs.map(build_ast).collect()),
           None => Ast::EmptyProgram,
         }
       }
@@ -252,9 +255,8 @@ fn build_custom_ast(pair: pest::iterators::Pair<Rule>) -> Ast {
   build_ast(pair)
 }
 
-fn evaluate_math_builtin(op: Operator, sexp: VecDeque<Ast>) -> Result<Ast, failure::Error> {
-  let sexp: Result<VecDeque<Ast>, failure::Error> =
-    sexp.into_iter().map(|exp| evaluate(exp)).collect();
+fn evaluate_math_builtin(op: &Operator, sexp: VecDeque<Ast>) -> Result<Ast, failure::Error> {
+  let sexp: Result<VecDeque<Ast>, failure::Error> = sexp.into_iter().map(evaluate).collect();
   let sexp = sexp?;
   //fast bailout if we don't only have numbers as operands
   if !sexp.iter().all(|ast| ast.is_number()) {
@@ -268,8 +270,8 @@ fn evaluate_math_builtin(op: Operator, sexp: VecDeque<Ast>) -> Result<Ast, failu
     Some(operand) => {
       let mut total = operand;
       //we only had one operand so check if it's an unary operator
-      if let None = values.peek() {
-        match op {
+      if values.peek().is_none() {
+        match *op {
           Operator::Minus => {
             if let Ast::Number(x) = total {
               Ok(Ast::Number(-x))
@@ -283,7 +285,7 @@ fn evaluate_math_builtin(op: Operator, sexp: VecDeque<Ast>) -> Result<Ast, failu
       //We have many operands
       } else {
         for val in values {
-          total = apply_op(op.clone(), total, evaluate(val)?)?
+          total = apply_op(op, total, evaluate(val)?)?
         }
         Ok(total)
       }
@@ -308,8 +310,7 @@ fn evaluate_eval(expr: VecDeque<Ast>) -> Result<Ast, failure::Error> {
 }
 
 fn evaluate_join(expr: VecDeque<Ast>) -> Result<Ast, failure::Error> {
-  let expr: Result<VecDeque<Ast>, failure::Error> =
-    expr.into_iter().map(|exp| evaluate(exp)).collect();
+  let expr: Result<VecDeque<Ast>, failure::Error> = expr.into_iter().map(evaluate).collect();
   let mut expr = expr?;
   if !expr.iter().all(|exp| exp.is_qexpression()) {
     bail!("Join can only work on Q-Expressions.")
@@ -361,7 +362,7 @@ fn evaluate_tail(expr: VecDeque<Ast>) -> Result<Ast, failure::Error> {
     let first_expr = expr.pop_front().expect("We checked the size.");
     let qexpr = evaluate(first_expr)?;
     if let Ast::QExpression(mut list) = qexpr {
-      if let Some(_) = list.pop_front() {
+      if list.pop_front().is_some() {
         Ok(Ast::QExpression(list))
       } else {
         bail!("Passed an empty Q-Expression to tail")
@@ -407,7 +408,7 @@ fn evaluate_sexpression(sexp: VecDeque<Ast>) -> Result<Ast, failure::Error> {
       | Operator::Exp
       | Operator::Minus
       | Operator::Plus
-      | Operator::Remainder => evaluate_math_builtin(op, sexp),
+      | Operator::Remainder => evaluate_math_builtin(&op, sexp),
       Operator::Join => evaluate_join(sexp),
       Operator::Head => evaluate_head(sexp),
       Operator::Tail => evaluate_tail(sexp),
@@ -419,7 +420,7 @@ fn evaluate_sexpression(sexp: VecDeque<Ast>) -> Result<Ast, failure::Error> {
     //We have no Operator on the first position that's only okay if
     //We have no other values in the VecDeque!
     Some(val) => {
-      if sexp.len() == 0 {
+      if sexp.is_empty() {
         evaluate(val)
       } else {
         bail!("The first element of a S-Expression needs to be an operator.")
@@ -443,27 +444,22 @@ fn main() {
   println!("Ownlisp version 0.0.3");
   println!("Press Ctrl+c to Exit\n");
 
-  loop {
-    match editline::readline("Ownlisp>") {
-      Some(line) => {
-        editline::add_history(line);
-        if line == "exit" {
-          break;
-        }
-        let parsed = OwnlispParser::parse(Rule::program, line.trim());
-        if let Ok(mut pairs) = parsed {
-          let program = build_custom_ast(pairs.next().unwrap());
-          //println!("{}", program);
-          let evaluated = evaluate(program);
-          match evaluated {
-            Ok(result) => println!("{}", result),
-            Err(err) => println!("{}", err),
-          }
-        } else {
-          println!("Syntax error: {:?}", parsed.unwrap_err());
-        }
+  while let Some(line) = editline::readline("Ownlisp>") {
+    editline::add_history(&line);
+    if line == "exit" {
+      break;
+    }
+    let parsed = OwnlispParser::parse(Rule::program, line.trim());
+    if let Ok(mut pairs) = parsed {
+      let program = build_custom_ast(pairs.next().unwrap());
+      //println!("{}", program);
+      let evaluated = evaluate(program);
+      match evaluated {
+        Ok(result) => println!("{}", result),
+        Err(err) => println!("{}", err),
       }
-      None => break,
+    } else {
+      println!("Syntax error: {:?}", parsed.unwrap_err());
     }
   }
 }
