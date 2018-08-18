@@ -1,10 +1,11 @@
 program = {soi ~ (expression+)? ~ eoi}
 sexpression = { "(" ~ expression* ~ ")" }
 qexpression = { "{" ~ expression* ~ "}"}
-expression = { number | operator | sexpression | qexpression }
+expression = { number | symbol | sexpression | qexpression }
 number = @{"-"? ~ digit+}
-operator = {"+" | "-" | "*" | "/" | "%" | "^" | "min" | "max"
-            | "list" | "head" | "tail" | "eval" | "join" | "len" }
+symbol = @{symbols+}
+symbols = _{'a'..'z' | 'A'..'Z' | '0'..'9' | "_" | "+" | "/" | "*" | "-" | "\\" 
+        | "=" | "<" | ">" | "!" } 
 digit = _{'0'..'9'}
 
 whitespace = _{" "}

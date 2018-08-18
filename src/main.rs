@@ -222,7 +222,9 @@ fn build_custom_ast(pair: pest::iterators::Pair<Rule>) -> Ast {
           .expect("We expect to only get valid numbers here"),
       ),
 
-      Rule::operator => Ast::Operator(pair.as_str().parse().expect("Unknown operator encountered")),
+      Rule::symbol => {
+        Ast::Operator(pair.as_str().parse().expect("Unknown operator encountered"))
+      }
 
       Rule::sexpression => {
         let res = pair.into_inner().map(build_ast).collect();
