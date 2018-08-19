@@ -26,6 +26,7 @@ const OP_HEAD: &str = "head";
 const OP_TAIL: &str = "tail";
 const OP_JOIN: &str = "join";
 const OP_EVAL: &str = "eval";
+const OP_DEF: &str = "def";
 
 type Env = HashMap<String, Ast>;
 type OwnlispResult = Result<Ast, failure::Error>;
@@ -92,6 +93,13 @@ impl Ast {
   fn is_number(&self) -> bool {
     match self {
       Ast::Number(_) => true,
+      _ => false,
+    }
+  }
+
+  fn is_symbol(&self) -> bool {
+    match self {
+      Ast::Symbol(_) => true,
       _ => false,
     }
   }
@@ -407,6 +415,32 @@ fn evaluate_list(ast: Ast, _env: &mut Env) -> OwnlispResult {
   }
 }
 
+fn evaluate_def(ast: Ast, env: &mut Env) -> OwnlispResult {
+  if let Ast::SExpression(mut sexp) = ast {
+    match sexp.pop_front() {
+      None => bail!("The def function needs two arguments!"),
+      Some(Ast::QExpression(names)) => {
+        if !names.iter().all(|name| name.is_symbol()) {
+          bail!("Function def can not define non-symbols!")
+        }
+        if sexp.len() != names.len(){
+          bail!("Function def can only define the same number of symbols to values.")
+        }
+        for i in 0..names.len() {
+          if let Ast::Symbol(ref name) = names[i] {
+            env.insert(name.to_owned(), sexp[i].clone());
+          }
+        }
+        Ok(Ast::EmptyProgram)
+      }
+      Some(_) => bail!("Function def passed incorrect type!"),
+    }
+
+  } else {
+    panic!("Wrong call!")
+  }
+}
+
 fn evaluate_sexpression(ast: Ast, env: &mut Env) -> OwnlispResult {
   let sexp = match ast {
     Ast::SExpression(sexp) => sexp,
@@ -467,10 +501,13 @@ fn add_builtins(env: &mut Env) {
   env.insert(OP_REM.to_owned(), Ast::Function(evaluate_rem));
   env.insert(OP_MIN.to_owned(), Ast::Function(evaluate_min));
   env.insert(OP_MAX.to_owned(), Ast::Function(evaluate_max));
+
+  //Def function
+  env.insert(OP_DEF.to_owned(), Ast::Function(evaluate_def));
 }
 
 fn main() {
-  println!("Ownlisp version 0.0.3");
+  println!("Ownlisp version 0.0.4");
   println!("Press Ctrl+c to Exit\n");
 
   let mut environment = Env::new();
@@ -485,7 +522,7 @@ fn main() {
     let parsed = OwnlispParser::parse(Rule::program, line);
     if let Ok(mut pairs) = parsed {
       let program = build_custom_ast(pairs.next().unwrap());
-      println!("{}", program);
+      //println!("{}", program);
       let evaluated = evaluate(program, &mut environment);
       match evaluated {
         Ok(result) => println!("{}", result),
