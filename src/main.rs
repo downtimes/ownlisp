@@ -11,6 +11,7 @@ extern crate failure;
 
 use pest::Parser;
 use std::collections::VecDeque;
+use std::collections::HashMap;
 
 const OP_MIN: &str = "min";
 const OP_MAX: &str = "max";
@@ -25,9 +26,10 @@ const OP_HEAD: &str = "head";
 const OP_TAIL: &str = "tail";
 const OP_JOIN: &str = "join";
 const OP_EVAL: &str = "eval";
-const OP_LEN: &str = "len";
 
-#[cfg(windows)]
+type Env<'a, 'b> = HashMap<&'a str, Ast<'b>>;
+type LFunction<'a> = fn(Ast<'a>, Env) -> Ast<'a>;
+
 mod editline {
   use std::io::{self, Write};
 
@@ -60,15 +62,15 @@ const _GRAMMAR: &str = include_str!("ownlisp.pest");
 struct OwnlispParser;
 
 #[derive(Debug)]
-enum Ast {
+enum Ast<'a> {
   Number(i64),
-  Operator(Operator),
-  SExpression(VecDeque<Ast>),
-  QExpression(VecDeque<Ast>),
+  Symbol(&'a str),
+  SExpression(VecDeque<Ast<'a>>),
+  QExpression(VecDeque<Ast<'a>>),
   EmptyProgram,
 }
 
-impl Ast {
+impl<'a> Ast<'a> {
   fn is_qexpression(&self) -> bool {
     match self {
       Ast::QExpression(_) => true,
@@ -84,11 +86,11 @@ impl Ast {
   }
 }
 
-impl std::fmt::Display for Ast {
+impl<'a> std::fmt::Display for Ast<'a> {
   fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
     match self {
       Ast::Number(num) => write!(f, "{}", num),
-      Ast::Operator(op) => write!(f, "{}", op),
+      Ast::Symbol(sym) => write!(f, "{}", sym),
       Ast::SExpression(values) => {
         let mut res = write!(f, "(");
         let mut iter = values.into_iter().peekable();
@@ -120,91 +122,25 @@ impl std::fmt::Display for Ast {
   }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-enum Operator {
-  Plus,
-  Minus,
-  Divide,
-  Multiply,
-  Remainder,
-  Exp,
-  Min,
-  Max,
-  List,
-  Eval,
-  Head,
-  Tail,
-  Join,
-  Len,
-}
-
-impl std::fmt::Display for Operator {
-  fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-    match self {
-      Operator::Plus => write!(f, "{}", OP_PLUS),
-      Operator::Minus => write!(f, "{}", OP_MINUS),
-      Operator::Divide => write!(f, "{}", OP_DIV),
-      Operator::Multiply => write!(f, "{}", OP_MULT),
-      Operator::Remainder => write!(f, "{}", OP_REM),
-      Operator::Exp => write!(f, "{}", OP_EXP),
-      Operator::Min => write!(f, "{}", OP_MIN),
-      Operator::Max => write!(f, "{}", OP_MAX),
-      Operator::Eval => write!(f, "{}", OP_EVAL),
-      Operator::Head => write!(f, "{}", OP_HEAD),
-      Operator::Tail => write!(f, "{}", OP_TAIL),
-      Operator::Join => write!(f, "{}", OP_JOIN),
-      Operator::List => write!(f, "{}", OP_LIST),
-      Operator::Len => write!(f, "{}", OP_LEN),
-    }
-  }
-}
-
-#[derive(Debug)]
-struct ParseOperatorError;
-
-impl std::str::FromStr for Operator {
-  type Err = ParseOperatorError;
-
-  fn from_str(s: &str) -> Result<Self, Self::Err> {
-    match s {
-      OP_MINUS => Ok(Operator::Minus),
-      OP_PLUS => Ok(Operator::Plus),
-      OP_MULT => Ok(Operator::Multiply),
-      OP_DIV => Ok(Operator::Divide),
-      OP_REM => Ok(Operator::Remainder),
-      OP_EXP => Ok(Operator::Exp),
-      OP_MIN => Ok(Operator::Min),
-      OP_MAX => Ok(Operator::Max),
-      OP_EVAL => Ok(Operator::Eval),
-      OP_LIST => Ok(Operator::List),
-      OP_HEAD => Ok(Operator::Head),
-      OP_TAIL => Ok(Operator::Tail),
-      OP_JOIN => Ok(Operator::Join),
-      OP_LEN => Ok(Operator::Len),
-      _ => Err(ParseOperatorError),
-    }
-  }
-}
-
-fn apply_op(op: &Operator, x: Ast, y: Ast) -> Result<Ast, failure::Error> {
+fn apply_op<'a>(op: &str, x: Ast<'a>, y: Ast<'a>) -> Result<Ast<'a>, failure::Error> {
   match (x, y) {
     (Ast::Number(x), Ast::Number(y)) => {
-      match *op {
-        Operator::Minus => Ok(Ast::Number(x - y)),
-        Operator::Plus => Ok(Ast::Number(x + y)),
-        Operator::Multiply => Ok(Ast::Number(x * y)),
-        Operator::Divide => {
+      match op {
+        OP_MINUS => Ok(Ast::Number(x - y)),
+        OP_PLUS => Ok(Ast::Number(x + y)),
+        OP_MULT => Ok(Ast::Number(x * y)),
+        OP_DIV => {
           if y == 0 {
             bail!("Attempted division by 0.")
           } else {
             Ok(Ast::Number(x / y))
           }
         }
-        Operator::Remainder => Ok(Ast::Number(x % y)),
+        OP_REM => Ok(Ast::Number(x % y)),
         //bODO: Check for if the conversation here is safe.
-        Operator::Exp => Ok(Ast::Number(x.pow(y as u32))),
-        Operator::Min => Ok(Ast::Number(std::cmp::min(x, y))),
-        Operator::Max => Ok(Ast::Number(std::cmp::max(x, y))),
+        OP_EXP => Ok(Ast::Number(x.pow(y as u32))),
+        OP_MIN => Ok(Ast::Number(std::cmp::min(x, y))),
+        OP_MAX => Ok(Ast::Number(std::cmp::max(x, y))),
         _ => panic!("We tried to apply a qexpression operator on a number"),
       }
     }
@@ -222,8 +158,10 @@ fn build_custom_ast(pair: pest::iterators::Pair<Rule>) -> Ast {
           .expect("We expect to only get valid numbers here"),
       ),
 
+      //TODO die ganze Sache mit operator usw muss hier weg und ein flexibles symbol
+      //management muss her
       Rule::symbol => {
-        Ast::Operator(pair.as_str().parse().expect("Unknown operator encountered"))
+        Ast::Symbol(pair.as_str())
       }
 
       Rule::sexpression => {
@@ -257,8 +195,8 @@ fn build_custom_ast(pair: pest::iterators::Pair<Rule>) -> Ast {
   build_ast(pair)
 }
 
-fn evaluate_math_builtin(op: &Operator, sexp: VecDeque<Ast>) -> Result<Ast, failure::Error> {
-  let sexp: Result<VecDeque<Ast>, failure::Error> = sexp.into_iter().map(evaluate).collect();
+fn evaluate_math_builtin<'a>(op: &str, sexp: VecDeque<Ast<'a>>, env: &mut Env) -> Result<Ast<'a>, failure::Error> {
+  let sexp: Result<VecDeque<Ast>, failure::Error> = sexp.into_iter().map(|exp| evaluate(exp, env)).collect();
   let sexp = sexp?;
   //fast bailout if we don't only have numbers as operands
   if !sexp.iter().all(|ast| ast.is_number()) {
@@ -273,21 +211,21 @@ fn evaluate_math_builtin(op: &Operator, sexp: VecDeque<Ast>) -> Result<Ast, fail
       let mut total = operand;
       //we only had one operand so check if it's an unary operator
       if values.peek().is_none() {
-        match *op {
-          Operator::Minus => {
+        match op {
+          OP_MINUS => {
             if let Ast::Number(x) = total {
               Ok(Ast::Number(-x))
             } else {
               unreachable!()
             }
           }
-          Operator::Max | Operator::Min => Ok(total),
+          OP_MIN | OP_MAX => Ok(total),
           _ => bail!("The operator {} is not an unary operator.", op),
         }
       //We have many operands
       } else {
         for val in values {
-          total = apply_op(op, total, evaluate(val)?)?
+          total = apply_op(op, total, evaluate(val, env)?)?
         }
         Ok(total)
       }
@@ -296,23 +234,23 @@ fn evaluate_math_builtin(op: &Operator, sexp: VecDeque<Ast>) -> Result<Ast, fail
   }
 }
 
-fn evaluate_eval(expr: VecDeque<Ast>) -> Result<Ast, failure::Error> {
+fn evaluate_eval<'a>(expr: VecDeque<Ast<'a>>, env: &mut Env) -> Result<Ast<'a>, failure::Error> {
   let mut expr = expr;
   if expr.len() != 1 {
     bail!("Eval only works on a single Q-Expression as argument.")
   } else {
-    let qexpr = evaluate(expr.pop_front().expect("We checked for size."))?;
+    let qexpr = evaluate(expr.pop_front().expect("We checked for size."), env)?;
     //unpack the QExpression
     if let Ast::QExpression(list) = qexpr {
-      evaluate(Ast::SExpression(list))
+      evaluate(Ast::SExpression(list), env)
     } else {
       bail!("Eval only works with QExpression as argument.")
     }
   }
 }
 
-fn evaluate_join(expr: VecDeque<Ast>) -> Result<Ast, failure::Error> {
-  let expr: Result<VecDeque<Ast>, failure::Error> = expr.into_iter().map(evaluate).collect();
+fn evaluate_join<'a>(expr: VecDeque<Ast<'a>>, env: &mut Env) -> Result<Ast<'a>, failure::Error> {
+  let expr: Result<VecDeque<Ast>, failure::Error> = expr.into_iter().map(|exp| evaluate(exp, env)).collect();
   let mut expr = expr?;
   if !expr.iter().all(|exp| exp.is_qexpression()) {
     bail!("Join can only work on Q-Expressions.")
@@ -335,12 +273,12 @@ fn evaluate_join(expr: VecDeque<Ast>) -> Result<Ast, failure::Error> {
   }
 }
 
-fn evaluate_head(expr: VecDeque<Ast>) -> Result<Ast, failure::Error> {
+fn evaluate_head<'a>(expr: VecDeque<Ast<'a>>, env: &mut Env) -> Result<Ast<'a>, failure::Error> {
   let mut expr = expr;
   if expr.len() == 1 {
     //Get the first element of the inner QExpression.
     let first_expr = expr.pop_front().expect("We checked the size.");
-    let qexpr = evaluate(first_expr)?;
+    let qexpr = evaluate(first_expr, env)?;
     if let Ast::QExpression(mut list) = qexpr {
       if let Some(first_elem) = list.pop_front() {
         let mut res = VecDeque::new();
@@ -357,12 +295,12 @@ fn evaluate_head(expr: VecDeque<Ast>) -> Result<Ast, failure::Error> {
   }
 }
 
-fn evaluate_tail(expr: VecDeque<Ast>) -> Result<Ast, failure::Error> {
+fn evaluate_tail<'a>(expr: VecDeque<Ast<'a>>, env: &mut Env) -> Result<Ast<'a>, failure::Error> {
   let mut expr = expr;
   if expr.len() == 1 {
     //Get the first element of the inner QExpression.
     let first_expr = expr.pop_front().expect("We checked the size.");
-    let qexpr = evaluate(first_expr)?;
+    let qexpr = evaluate(first_expr, env)?;
     if let Ast::QExpression(mut list) = qexpr {
       if list.pop_front().is_some() {
         Ok(Ast::QExpression(list))
@@ -381,49 +319,33 @@ fn evaluate_list(expr: VecDeque<Ast>) -> Ast {
   Ast::QExpression(expr)
 }
 
-fn evaluate_len(expr: VecDeque<Ast>) -> Result<Ast, failure::Error> {
-  let mut expr = expr;
-  if expr.len() != 1 {
-    bail!("Len only works with 1 argument.")
-  } else {
-    let first_expr = expr.pop_front().expect("we checked for size.");
-    let qexpr = evaluate(first_expr)?;
-    if let Ast::QExpression(list) = qexpr {
-      //TODO: this conversation might go negative for very long lists.
-      Ok(Ast::Number(list.len() as i64))
-    } else {
-      bail!("Len only works on a Q-Expression.")
-    }
-  }
-}
-
-fn evaluate_sexpression(sexp: VecDeque<Ast>) -> Result<Ast, failure::Error> {
+fn evaluate_sexpression<'a>(sexp: VecDeque<Ast<'a>>, env: &mut Env) -> Result<Ast<'a>, failure::Error> {
   let mut sexp = sexp;
   match sexp.pop_front() {
     //we have an operand at the first position
     None => Ok(Ast::EmptyProgram),
-    Some(Ast::Operator(op)) => match op {
-      Operator::Max
-      | Operator::Min
-      | Operator::Divide
-      | Operator::Multiply
-      | Operator::Exp
-      | Operator::Minus
-      | Operator::Plus
-      | Operator::Remainder => evaluate_math_builtin(&op, sexp),
-      Operator::Join => evaluate_join(sexp),
-      Operator::Head => evaluate_head(sexp),
-      Operator::Tail => evaluate_tail(sexp),
-      Operator::Eval => evaluate_eval(sexp),
-      Operator::List => Ok(evaluate_list(sexp)),
-      Operator::Len => evaluate_len(sexp),
+    Some(Ast::Symbol(sym)) => match sym {
+      OP_MAX
+      | OP_MIN
+      | OP_DIV
+      | OP_MULT
+      | OP_PLUS
+      | OP_MINUS
+      | OP_EXP
+      | OP_REM => evaluate_math_builtin(sym, sexp, env),
+      OP_JOIN => evaluate_join(sexp, env),
+      OP_HEAD => evaluate_head(sexp, env),
+      OP_TAIL => evaluate_tail(sexp, env),
+      OP_EVAL => evaluate_eval(sexp, env),
+      OP_LIST => Ok(evaluate_list(sexp)),
+      _ => panic!("not yet implemented!")
     },
 
     //We have no Operator on the first position that's only okay if
     //We have no other values in the VecDeque!
     Some(val) => {
       if sexp.is_empty() {
-        evaluate(val)
+        evaluate(val, env)
       } else {
         bail!("The first element of a S-Expression needs to be an operator.")
       }
@@ -431,20 +353,28 @@ fn evaluate_sexpression(sexp: VecDeque<Ast>) -> Result<Ast, failure::Error> {
   }
 }
 
-fn evaluate(program: Ast) -> Result<Ast, failure::Error> {
+fn evaluate<'a>(program: Ast<'a>, environment: &mut Env) -> Result<Ast<'a>, failure::Error> {
   match program {
+    Ast::Function(_) => Ok(program),
     Ast::Number(_) => Ok(program),
-    Ast::Operator(_) => Ok(program),
-    Ast::SExpression(values) => evaluate_sexpression(values),
+    Ast::Symbol(_) => Ok(program),
+    Ast::SExpression(values) => evaluate_sexpression(values, environment),
     //don't do anything for Q-Expressions
     Ast::QExpression(values) => Ok(Ast::QExpression(values)),
     _ => bail!("Unimplemented evaluation attempted."),
   }
 }
 
+fn fill_environment(env: &mut Env) {
+
+}
+
 fn main() {
   println!("Ownlisp version 0.0.3");
   println!("Press Ctrl+c to Exit\n");
+
+  let mut environment = Env::new();
+  fill_environment(&mut environment);
 
   while let Some(line) = editline::readline("Ownlisp>") {
     editline::add_history(&line);
@@ -455,7 +385,7 @@ fn main() {
     if let Ok(mut pairs) = parsed {
       let program = build_custom_ast(pairs.next().unwrap());
       //println!("{}", program);
-      let evaluated = evaluate(program);
+      let evaluated = evaluate(program, &mut environment);
       match evaluated {
         Ok(result) => println!("{}", result),
         Err(err) => println!("{}", err),
