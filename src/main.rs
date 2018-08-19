@@ -170,8 +170,6 @@ fn build_custom_ast(pair: pest::iterators::Pair<Rule>) -> Ast {
           .expect("We expect to only get valid numbers here"),
       ),
 
-      //TODO die ganze Sache mit operator usw muss hier weg und ein flexibles symbol
-      //management muss her
       Rule::symbol => {
         Ast::Symbol(pair.as_str().to_owned())
       }
@@ -305,7 +303,7 @@ fn evaluate_math_builtin(op: &str, sexp: VecDeque<Ast>, env: &mut Env) -> Ownlis
         Ok(total)
       }
     }
-    None => bail!("Functions need a arguments to work on."),
+    None => bail!("Functions need arguments to work on."),
   }
 }
 
@@ -416,21 +414,19 @@ fn evaluate_sexpression(ast: Ast, env: &mut Env) -> OwnlispResult {
   };
   //Evaluate all arguments and if we have any errors bail out
   let mut sexp: VecDeque<_> = sexp.into_iter().map(|exp| evaluate(exp, env)).collect::<Result<_, _>>()?;
-  match sexp.pop_front() {
-    //Our arguments are empty so we evaluate to the empty program
-    None => Ok(Ast::EmptyProgram),
-    //we have a function at the first position
-    Some(Ast::Function(fun)) => {
-      fun(Ast::SExpression(sexp), env)
-    }
+  if sexp.len() == 1 {
+    Ok(sexp.pop_front().expect("We checked the length!"))
+  } else {
+    match sexp.pop_front() {
+      //Our arguments are empty so we evaluate to the empty program
+      None => Ok(Ast::EmptyProgram),
+      //we have a function at the first position
+      Some(Ast::Function(fun)) => {
+        fun(Ast::SExpression(sexp), env)
+      }
 
-    //We have no function in the first position. That's only okay if
-    //we have only one value
-    Some(val) => {
-      if sexp.is_empty() {
-        evaluate(val, env)
-      } else {
-        bail!("The first element of a S-Expression needs to be a function.")
+      Some(_) => {
+        bail!("The first element in a SExpression needs to be a function.")
       }
     }
   }
@@ -444,7 +440,7 @@ fn evaluate(program: Ast, environment: &mut Env) -> OwnlispResult {
       if let Some(ast) = environment.get(&sym) {
         Ok(ast.clone())
       } else {
-        Ok(Ast::Symbol(sym))
+        bail!("Unbound symbol!")
       }
     }
     Ast::SExpression(_) => evaluate_sexpression(program, environment),
@@ -489,7 +485,7 @@ fn main() {
     let parsed = OwnlispParser::parse(Rule::program, line);
     if let Ok(mut pairs) = parsed {
       let program = build_custom_ast(pairs.next().unwrap());
-      //println!("{}", program);
+      println!("{}", program);
       let evaluated = evaluate(program, &mut environment);
       match evaluated {
         Ok(result) => println!("{}", result),
