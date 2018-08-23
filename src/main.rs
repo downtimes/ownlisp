@@ -213,70 +213,27 @@ fn build_custom_ast(pair: pest::iterators::Pair<Rule>) -> Ast {
   build_ast(pair)
 }
 
-//TODO: It's functional but needs a lot of cleanup. Maybe some Macros just to train it
-fn evaluate_mult(ast: Ast, env: &mut Env) -> OwnlispResult {
-  if let Ast::SExpression(sexp) = ast {
-    evaluate_math_builtin(OP_MULT, sexp, env)
-  } else {
-    panic!("Wrong call!");
-  }
+
+macro_rules! create_evaluate_math {
+  ($name:ident, $op:expr) => {
+    fn $name(ast: Ast, env: &mut Env) -> OwnlispResult {
+      if let Ast::SExpression(sexp) = ast {
+        evaluate_math_builtin($op, sexp, env)
+      } else {
+        panic!("Wrong call!")
+      }
+    }
+  };
 }
 
-fn evaluate_div(ast: Ast, env: &mut Env) -> OwnlispResult {
-  if let Ast::SExpression(sexp) = ast {
-    evaluate_math_builtin(OP_DIV, sexp, env)
-  } else {
-    panic!("Wrong call!");
-  }
-}
-
-fn evaluate_rem(ast: Ast, env: &mut Env) -> OwnlispResult {
-  if let Ast::SExpression(sexp) = ast {
-    evaluate_math_builtin(OP_REM, sexp, env)
-  } else {
-    panic!("Wrong call!");
-  }
-}
-
-fn evaluate_exp(ast: Ast, env: &mut Env) -> OwnlispResult {
-  if let Ast::SExpression(sexp) = ast {
-    evaluate_math_builtin(OP_EXP, sexp, env)
-  } else {
-    panic!("Wrong call!");
-  }
-}
-
-fn evaluate_minus(ast: Ast, env: &mut Env) -> OwnlispResult {
-  if let Ast::SExpression(sexp) = ast {
-    evaluate_math_builtin(OP_MINUS, sexp, env)
-  } else {
-    panic!("Wrong call!");
-  }
-}
-
-fn evaluate_add(ast: Ast, env: &mut Env) -> OwnlispResult {
-  if let Ast::SExpression(sexp) = ast {
-    evaluate_math_builtin(OP_PLUS, sexp, env)
-  } else {
-    panic!("Wrong call!");
-  }
-}
-
-fn evaluate_min<'a>(ast: Ast, env: &mut Env) -> OwnlispResult {
-  if let Ast::SExpression(sexp) = ast {
-    evaluate_math_builtin(OP_MIN, sexp, env)
-  } else {
-    panic!("Wrong call!");
-  }
-}
-
-fn evaluate_max(ast: Ast, env: &mut Env) -> OwnlispResult {
-  if let Ast::SExpression(sexp) = ast {
-    evaluate_math_builtin(OP_MAX, sexp, env)
-  } else {
-    panic!("Wrong call!");
-  }
-}
+create_evaluate_math!(evaluate_mult, OP_MULT);
+create_evaluate_math!(evaluate_div, OP_DIV);
+create_evaluate_math!(evaluate_plus, OP_PLUS);
+create_evaluate_math!(evaluate_minus, OP_MINUS);
+create_evaluate_math!(evaluate_rem, OP_REM);
+create_evaluate_math!(evaluate_exp, OP_EXP);
+create_evaluate_math!(evaluate_min, OP_MIN);
+create_evaluate_math!(evaluate_max, OP_MAX);
 
 fn evaluate_math_builtin(op: &str, sexp: VecDeque<Ast>, env: &mut Env) -> OwnlispResult {
   //fast bailout if we don't only have numbers as operands
@@ -493,7 +450,7 @@ fn add_builtins(env: &mut Env) {
   env.insert(OP_JOIN.to_owned(), Ast::Function(evaluate_join));
 
   //Mathematical Functions
-  env.insert(OP_PLUS.to_owned(), Ast::Function(evaluate_add));
+  env.insert(OP_PLUS.to_owned(), Ast::Function(evaluate_plus));
   env.insert(OP_MINUS.to_owned(), Ast::Function(evaluate_minus));
   env.insert(OP_MULT.to_owned(), Ast::Function(evaluate_mult));
   env.insert(OP_DIV.to_owned(), Ast::Function(evaluate_div));
