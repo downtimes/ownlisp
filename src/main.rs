@@ -29,12 +29,13 @@ const OP_TAIL: &str = "tail";
 const OP_JOIN: &str = "join";
 const OP_EVAL: &str = "eval";
 const OP_DEF: &str = "def";
+const OP_LAMBDA: &str = "\\";
 
 lazy_static! {
   static ref RESERVED_WORDS: Vec<&'static str> = {
     vec![
       OP_MIN, OP_MAX, OP_PLUS, OP_MINUS, OP_EXP, OP_MULT, OP_DIV, OP_REM, OP_LIST, OP_HEAD,
-      OP_TAIL, OP_JOIN, OP_EVAL, OP_DEF,
+      OP_TAIL, OP_JOIN, OP_EVAL, OP_DEF, OP_LAMBDA,
     ]
   };
 }
@@ -77,7 +78,8 @@ struct OwnlispParser;
 #[derive(Clone)]
 enum Ast {
   Number(i64),
-  Function(LFunction),
+  Builtin(LFunction),
+  Function(Env, VecDeque<Ast>, VecDeque<Ast>),
   Symbol(String),
   SExpression(VecDeque<Ast>),
   QExpression(VecDeque<Ast>),
@@ -87,7 +89,7 @@ enum Ast {
 impl std::fmt::Debug for Ast {
   fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
     match *self {
-      Ast::Function(_) => write!(f, "Function(<function>)"),
+      Ast::Builtin(_) => write!(f, "Builtin(<builtin>)"),
       _ => write!(f, "{:?}", self),
     }
   }
@@ -111,7 +113,8 @@ impl std::fmt::Display for Ast {
         res = res.and(write!(f, ")"));
         res
       }
-      Ast::Function(_) => write!(f, "<function>"),
+      Ast::Builtin(_) => write!(f, "<builtin>"),
+      Ast::Function(_, _, _) => write!(f, "<function>"),
       Ast::QExpression(values) => {
         let mut res = write!(f, "{{");
         let mut iter = values.into_iter().peekable();
@@ -282,7 +285,7 @@ fn evaluate_join(ast: Ast, _env: &mut Env) -> OwnlispResult {
     .collect::<Result<_, _>>()?;
 
   match qlists.pop_front() {
-    //Flatten all the QExpressions into the first one    
+    //Flatten all the QExpressions into the first one
     Some(mut res) => {
       for mut list in qlists {
         res.append(&mut list);
@@ -349,6 +352,37 @@ fn evaluate_list(ast: Ast, _env: &mut Env) -> OwnlispResult {
   }
 }
 
+fn evaluate_lambda(ast: Ast, env: &mut Env) -> OwnlispResult {
+  if let Ast::SExpression(sexpr) = ast {
+    //Check that we have two arguments and both are QExpressions
+    if sexpr.len() != 2 {
+      bail!("Lambda needs 2 QExpressions as arguments.");
+    }
+    let mut qexprs = sexpr
+      .into_iter()
+      .map(|expr| match expr {
+        Ast::QExpression(qexpr) => Ok(qexpr),
+        _ => Err(format_err!("Lambda only works with QExpressions!")),
+      })
+      .collect::<Result<VecDeque<_>, _>>()?;
+
+    //Check That we only have Symbols in first argument list
+    if !qexprs[0].iter().all(|symbol| match symbol {
+      Ast::Symbol(_) => true,
+      _ => false,
+    }) {
+      bail!("Cannot define non-symbol!")
+    }
+    Ok(Ast::Function(
+      Env::new(),
+      qexprs.pop_front().expect("Checked for length"),
+      qexprs.pop_front().expect("Checked for length"),
+    ))
+  } else {
+    panic!("Wrong call!");
+  }
+}
+
 fn evaluate_def(ast: Ast, env: &mut Env) -> OwnlispResult {
   if let Ast::SExpression(mut sexp) = ast {
     match sexp.pop_front() {
@@ -399,7 +433,7 @@ fn evaluate_sexpression(ast: Ast, env: &mut Env) -> OwnlispResult {
       //Our arguments are empty so we evaluate to the empty program
       None => Ok(Ast::EmptyProgram),
       //we have a function at the first position
-      Some(Ast::Function(fun)) => fun(Ast::SExpression(sexp), env),
+      Some(Ast::Builtin(fun)) => fun(Ast::SExpression(sexp), env),
 
       Some(_) => bail!("The first element in a SExpression needs to be a function."),
     }
@@ -408,8 +442,6 @@ fn evaluate_sexpression(ast: Ast, env: &mut Env) -> OwnlispResult {
 
 fn evaluate(program: Ast, environment: &mut Env) -> OwnlispResult {
   match program {
-    Ast::Function(_) => Ok(program),
-    Ast::Number(_) => Ok(program),
     Ast::Symbol(sym) => {
       if let Some(ast) = environment.get(&sym) {
         Ok(ast.clone())
@@ -418,32 +450,33 @@ fn evaluate(program: Ast, environment: &mut Env) -> OwnlispResult {
       }
     }
     Ast::SExpression(_) => evaluate_sexpression(program, environment),
-    //don't do anything for Q-Expressions
-    Ast::QExpression(_) => Ok(program),
-    Ast::EmptyProgram => Ok(program),
+    //don't do anything for Other types of programs
+    _ => Ok(program),
   }
 }
 
 fn add_builtins(env: &mut Env) {
   //List functions
-  env.insert(OP_LIST.to_owned(), Ast::Function(evaluate_list));
-  env.insert(OP_HEAD.to_owned(), Ast::Function(evaluate_head));
-  env.insert(OP_TAIL.to_owned(), Ast::Function(evaluate_tail));
-  env.insert(OP_EVAL.to_owned(), Ast::Function(evaluate_eval));
-  env.insert(OP_JOIN.to_owned(), Ast::Function(evaluate_join));
+  env.insert(OP_LIST.to_owned(), Ast::Builtin(evaluate_list));
+  env.insert(OP_HEAD.to_owned(), Ast::Builtin(evaluate_head));
+  env.insert(OP_TAIL.to_owned(), Ast::Builtin(evaluate_tail));
+  env.insert(OP_EVAL.to_owned(), Ast::Builtin(evaluate_eval));
+  env.insert(OP_JOIN.to_owned(), Ast::Builtin(evaluate_join));
 
   //Mathematical Functions
-  env.insert(OP_PLUS.to_owned(), Ast::Function(evaluate_plus));
-  env.insert(OP_MINUS.to_owned(), Ast::Function(evaluate_minus));
-  env.insert(OP_MULT.to_owned(), Ast::Function(evaluate_mult));
-  env.insert(OP_DIV.to_owned(), Ast::Function(evaluate_div));
-  env.insert(OP_EXP.to_owned(), Ast::Function(evaluate_exp));
-  env.insert(OP_REM.to_owned(), Ast::Function(evaluate_rem));
-  env.insert(OP_MIN.to_owned(), Ast::Function(evaluate_min));
-  env.insert(OP_MAX.to_owned(), Ast::Function(evaluate_max));
+  env.insert(OP_PLUS.to_owned(), Ast::Builtin(evaluate_plus));
+  env.insert(OP_MINUS.to_owned(), Ast::Builtin(evaluate_minus));
+  env.insert(OP_MULT.to_owned(), Ast::Builtin(evaluate_mult));
+  env.insert(OP_DIV.to_owned(), Ast::Builtin(evaluate_div));
+  env.insert(OP_EXP.to_owned(), Ast::Builtin(evaluate_exp));
+  env.insert(OP_REM.to_owned(), Ast::Builtin(evaluate_rem));
+  env.insert(OP_MIN.to_owned(), Ast::Builtin(evaluate_min));
+  env.insert(OP_MAX.to_owned(), Ast::Builtin(evaluate_max));
 
   //Def function
-  env.insert(OP_DEF.to_owned(), Ast::Function(evaluate_def));
+  env.insert(OP_DEF.to_owned(), Ast::Builtin(evaluate_def));
+  //Func function
+  env.insert(OP_LAMBDA.to_owned(), Ast::Builtin(evaluate_lambda));
 }
 
 fn main() {
