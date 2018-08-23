@@ -8,10 +8,12 @@ extern crate pest;
 extern crate pest_derive;
 #[macro_use]
 extern crate failure;
+#[macro_use]
+extern crate lazy_static;
 
 use pest::Parser;
-use std::collections::VecDeque;
 use std::collections::HashMap;
+use std::collections::VecDeque;
 
 const OP_MIN: &str = "min";
 const OP_MAX: &str = "max";
@@ -27,6 +29,15 @@ const OP_TAIL: &str = "tail";
 const OP_JOIN: &str = "join";
 const OP_EVAL: &str = "eval";
 const OP_DEF: &str = "def";
+
+lazy_static! {
+  static ref RESERVED_WORDS: Vec<&'static str> = {
+    vec![
+      OP_MIN, OP_MAX, OP_PLUS, OP_MINUS, OP_EXP, OP_MULT, OP_DIV, OP_REM, OP_LIST, OP_HEAD,
+      OP_TAIL, OP_JOIN, OP_EVAL, OP_DEF,
+    ]
+  };
+}
 
 type Env = HashMap<String, Ast>;
 type OwnlispResult = Result<Ast, failure::Error>;
@@ -82,29 +93,6 @@ impl std::fmt::Debug for Ast {
   }
 }
 
-impl Ast {
-  fn is_qexpression(&self) -> bool {
-    match self {
-      Ast::QExpression(_) => true,
-      _ => false,
-    }
-  }
-
-  fn is_number(&self) -> bool {
-    match self {
-      Ast::Number(_) => true,
-      _ => false,
-    }
-  }
-
-  fn is_symbol(&self) -> bool {
-    match self {
-      Ast::Symbol(_) => true,
-      _ => false,
-    }
-  }
-}
-
 impl std::fmt::Display for Ast {
   fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
     match self {
@@ -142,29 +130,24 @@ impl std::fmt::Display for Ast {
   }
 }
 
-fn apply_op(op: &str, x: Ast, y: Ast) -> OwnlispResult {
-  match (x, y) {
-    (Ast::Number(x), Ast::Number(y)) => {
-      match op {
-        OP_MINUS => Ok(Ast::Number(x - y)),
-        OP_PLUS => Ok(Ast::Number(x + y)),
-        OP_MULT => Ok(Ast::Number(x * y)),
-        OP_DIV => {
-          if y == 0 {
-            bail!("Attempted division by 0.")
-          } else {
-            Ok(Ast::Number(x / y))
-          }
-        }
-        OP_REM => Ok(Ast::Number(x % y)),
-        //bODO: Check for if the conversation here is safe.
-        OP_EXP => Ok(Ast::Number(x.pow(y as u32))),
-        OP_MIN => Ok(Ast::Number(std::cmp::min(x, y))),
-        OP_MAX => Ok(Ast::Number(std::cmp::max(x, y))),
-        _ => panic!("We tried to apply a qexpression operator on a number"),
+fn apply_op(op: &str, x: i64, y: i64) -> Result<i64, failure::Error> {
+  match op {
+    OP_MINUS => Ok(x - y),
+    OP_PLUS => Ok(x + y),
+    OP_MULT => Ok(x * y),
+    OP_DIV => {
+      if y == 0 {
+        bail!("Attempted division by 0.")
+      } else {
+        Ok(x / y)
       }
     }
-    _ => panic!("Apply op called with invalid arguments."),
+    OP_REM => Ok(x % y),
+    //bODO: Check for if the conversation here is safe.
+    OP_EXP => Ok(x.pow(y as u32)),
+    OP_MIN => Ok(std::cmp::min(x, y)),
+    OP_MAX => Ok(std::cmp::max(x, y)),
+    _ => panic!("We tried to apply a qexpression operator on a number"),
   }
 }
 
@@ -178,9 +161,7 @@ fn build_custom_ast(pair: pest::iterators::Pair<Rule>) -> Ast {
           .expect("We expect to only get valid numbers here"),
       ),
 
-      Rule::symbol => {
-        Ast::Symbol(pair.as_str().to_owned())
-      }
+      Rule::symbol => Ast::Symbol(pair.as_str().to_owned()),
 
       Rule::sexpression => {
         let res = pair.into_inner().map(build_ast).collect();
@@ -213,12 +194,11 @@ fn build_custom_ast(pair: pest::iterators::Pair<Rule>) -> Ast {
   build_ast(pair)
 }
 
-
 macro_rules! create_evaluate_math {
   ($name:ident, $op:expr) => {
-    fn $name(ast: Ast, env: &mut Env) -> OwnlispResult {
+    fn $name(ast: Ast, _env: &mut Env) -> OwnlispResult {
       if let Ast::SExpression(sexp) = ast {
-        evaluate_math_builtin($op, sexp, env)
+        evaluate_math_builtin($op, sexp)
       } else {
         panic!("Wrong call!")
       }
@@ -235,37 +215,34 @@ create_evaluate_math!(evaluate_exp, OP_EXP);
 create_evaluate_math!(evaluate_min, OP_MIN);
 create_evaluate_math!(evaluate_max, OP_MAX);
 
-fn evaluate_math_builtin(op: &str, sexp: VecDeque<Ast>, env: &mut Env) -> OwnlispResult {
+fn evaluate_math_builtin(op: &str, sexp: VecDeque<Ast>) -> OwnlispResult {
   //fast bailout if we don't only have numbers as operands
-  if !sexp.iter().all(|ast| ast.is_number()) {
-    println!("{:?}", sexp);
-    bail!("Math functions only work with numbers.")
-  }
+  let sexp: Vec<_> = sexp
+    .into_iter()
+    .map(|operand| match operand {
+      Ast::Number(x) => Ok(x),
+      _ => Err(format_err!("Math functions only work with numbers!")),
+    })
+    .collect::<Result<_, _>>()?;
 
-  let mut values = sexp.into_iter().peekable();
-  let first_operand = values.next();
+  let mut operands = sexp.into_iter().peekable();
+  let first_operand = operands.next();
   match first_operand {
     Some(operand) => {
       let mut total = operand;
       //we only had one operand so check if it's an unary operator
-      if values.peek().is_none() {
+      if operands.peek().is_none() {
         match op {
-          OP_MINUS => {
-            if let Ast::Number(x) = total {
-              Ok(Ast::Number(-x))
-            } else {
-              unreachable!()
-            }
-          }
-          OP_MIN | OP_MAX => Ok(total),
+          OP_MINUS => Ok(Ast::Number(-total)),
+          OP_MIN | OP_MAX => Ok(Ast::Number(total)),
           _ => bail!("The function {} is not an unary function.", op),
         }
       //We have many operands
       } else {
-        for val in values {
-          total = apply_op(op, total, evaluate(val, env)?)?
+        for val in operands {
+          total = apply_op(op, total, val)?;
         }
-        Ok(total)
+        Ok(Ast::Number(total))
       }
     }
     None => bail!("Functions need arguments to work on."),
@@ -275,7 +252,7 @@ fn evaluate_math_builtin(op: &str, sexp: VecDeque<Ast>, env: &mut Env) -> Ownlis
 fn evaluate_eval(ast: Ast, env: &mut Env) -> OwnlispResult {
   let mut expr = match ast {
     Ast::SExpression(sexp) => sexp,
-    _ => panic!("Wrong call!")
+    _ => panic!("Wrong call!"),
   };
   if expr.len() != 1 {
     bail!("Eval only works on a single Q-Expression as argument.")
@@ -291,35 +268,35 @@ fn evaluate_eval(ast: Ast, env: &mut Env) -> OwnlispResult {
 }
 
 fn evaluate_join(ast: Ast, _env: &mut Env) -> OwnlispResult {
-  let mut expr = match ast {
+  let expr = match ast {
     Ast::SExpression(sexp) => sexp,
-    _ => panic!("Wrong call!")
+    _ => panic!("Wrong call!"),
   };
-  if !expr.iter().all(|exp| exp.is_qexpression()) {
-    bail!("Join can only work on Q-Expressions.")
-  }
 
-  match expr.pop_front() {
-    Some(Ast::QExpression(mut res)) => {
-      for exp in expr {
-        if let Ast::QExpression(mut other) = exp {
-          res.append(&mut other);
-        } else {
-          unreachable!()
-        }
+  let mut qlists: VecDeque<_> = expr
+    .into_iter()
+    .map(|expr| match expr {
+      Ast::QExpression(exp) => Ok(exp),
+      _ => Err(format_err!("Join can only work on QExpressions!")),
+    })
+    .collect::<Result<_, _>>()?;
+
+  match qlists.pop_front() {
+    //Flatten all the QExpressions into the first one    
+    Some(mut res) => {
+      for mut list in qlists {
+        res.append(&mut list);
       }
       Ok(Ast::QExpression(res))
     }
     None => bail!("Join needs an argument to work on."),
-    //We checked if it is some it has to be a QExpression
-    _ => unreachable!(),
   }
 }
 
 fn evaluate_head(ast: Ast, env: &mut Env) -> OwnlispResult {
   let mut expr = match ast {
     Ast::SExpression(sexp) => sexp,
-    _ => panic!("Wrong call!")
+    _ => panic!("Wrong call!"),
   };
   if expr.len() == 1 {
     //Get the first element of the inner QExpression.
@@ -344,7 +321,7 @@ fn evaluate_head(ast: Ast, env: &mut Env) -> OwnlispResult {
 fn evaluate_tail(ast: Ast, env: &mut Env) -> OwnlispResult {
   let mut expr = match ast {
     Ast::SExpression(sexp) => sexp,
-    _ => panic!("Wrong call!")
+    _ => panic!("Wrong call!"),
   };
   if expr.len() == 1 {
     //Get the first element of the inner QExpression.
@@ -377,22 +354,29 @@ fn evaluate_def(ast: Ast, env: &mut Env) -> OwnlispResult {
     match sexp.pop_front() {
       None => bail!("The def function needs two arguments!"),
       Some(Ast::QExpression(names)) => {
-        if !names.iter().all(|name| name.is_symbol()) {
-          bail!("Function def can not define non-symbols!")
-        }
-        if sexp.len() != names.len(){
+        let mut names_str: VecDeque<_> = names
+          .into_iter()
+          .map(|ast| match ast {
+            Ast::Symbol(sym) => Ok(sym),
+            _ => Err(format_err!("Function def can not define non-symbol!")),
+          })
+          .collect::<Result<_, _>>()?;
+        if sexp.len() != names_str.len() {
           bail!("Function def can only define the same number of symbols to values.")
         }
-        for i in 0..names.len() {
-          if let Ast::Symbol(ref name) = names[i] {
-            env.insert(name.to_owned(), sexp[i].clone());
-          }
+        if names_str
+          .iter()
+          .any(|name| RESERVED_WORDS.iter().any(|reserved| reserved == name))
+        {
+          bail!("Redefinition of reserved keyword is not possible!")
+        }
+        for (i, name) in names_str.into_iter().enumerate() {
+          env.insert(name.to_owned(), sexp[i].clone());
         }
         Ok(Ast::EmptyProgram)
       }
       Some(_) => bail!("Function def passed incorrect type!"),
     }
-
   } else {
     panic!("Wrong call!")
   }
@@ -401,10 +385,13 @@ fn evaluate_def(ast: Ast, env: &mut Env) -> OwnlispResult {
 fn evaluate_sexpression(ast: Ast, env: &mut Env) -> OwnlispResult {
   let sexp = match ast {
     Ast::SExpression(sexp) => sexp,
-    _ => panic!("called it wrong!")
+    _ => panic!("called it wrong!"),
   };
   //Evaluate all arguments and if we have any errors bail out
-  let mut sexp: VecDeque<_> = sexp.into_iter().map(|exp| evaluate(exp, env)).collect::<Result<_, _>>()?;
+  let mut sexp: VecDeque<_> = sexp
+    .into_iter()
+    .map(|exp| evaluate(exp, env))
+    .collect::<Result<_, _>>()?;
   if sexp.len() == 1 {
     Ok(sexp.pop_front().expect("We checked the length!"))
   } else {
@@ -412,13 +399,9 @@ fn evaluate_sexpression(ast: Ast, env: &mut Env) -> OwnlispResult {
       //Our arguments are empty so we evaluate to the empty program
       None => Ok(Ast::EmptyProgram),
       //we have a function at the first position
-      Some(Ast::Function(fun)) => {
-        fun(Ast::SExpression(sexp), env)
-      }
+      Some(Ast::Function(fun)) => fun(Ast::SExpression(sexp), env),
 
-      Some(_) => {
-        bail!("The first element in a SExpression needs to be a function.")
-      }
+      Some(_) => bail!("The first element in a SExpression needs to be a function."),
     }
   }
 }
