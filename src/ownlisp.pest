@@ -3,9 +3,9 @@ sexpression = { "(" ~ expression* ~ ")" }
 qexpression = { "{" ~ expression* ~ "}"}
 expression = { number | symbol | sexpression | qexpression }
 number = @{"-"? ~ digit+}
-symbol = @{symbols+}
+symbol = @{symbols+ | ":"}
 symbols = _{'a'..'z' | 'A'..'Z' | '0'..'9' | "_" | "+" | "/" | "*" | "-" | "\\" 
-        | "=" | "<" | ">" | "!" } 
+        | "=" | "<" | ">" | "!" | "|" | "&" } 
 digit = _{'0'..'9'}
 
 whitespace = _{" "}

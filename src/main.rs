@@ -40,9 +40,63 @@ lazy_static! {
   };
 }
 
-type Env = HashMap<String, Ast>;
+type EnvId = usize;
+
+#[derive(Clone)]
+struct Env {
+  parent_id: Option<EnvId>,
+  map: HashMap<String, Ast>,
+}
+
+struct Environments {
+  envs: Vec<Env>,
+}
+
+impl Environments {
+  fn new() -> Environments {
+    Environments {
+      envs: vec![Env {
+        parent_id: None,
+        map: HashMap::new(),
+      }],
+    }
+  }
+
+  fn create_env(&mut self) -> EnvId {
+    self.envs.push(Env {
+      parent_id: None,
+      map: HashMap::new(),
+    });
+    self.envs.len() - 1
+  }
+
+  fn set_parent(&mut self, env: EnvId, parent: EnvId) {
+    self.envs[env].parent_id = Some(parent);
+  }
+
+  fn put_global(&mut self, key: String, value: Ast) {
+    self.envs[0].map.insert(key, value);
+  }
+
+  fn put_local(&mut self, env: EnvId, key: String, value: Ast) {
+    self.envs[env].map.insert(key, value);
+  }
+
+  fn get(&mut self, active_env: EnvId, key: &String) -> Option<&Ast> {
+    let mut active_env = active_env;
+    //loop through all parents
+    while let None = self.envs[active_env].map.get(key) {
+      match self.envs[active_env].parent_id {
+        None => return None,
+        Some(id) => active_env = id,
+      }
+    }
+    self.envs[active_env].map.get(key)
+  }
+}
+
 type OwnlispResult = Result<Ast, failure::Error>;
-type LFunction = fn(Ast, &mut Env) -> OwnlispResult;
+type LFunction = fn(Ast, &mut Environments, active_env: EnvId) -> OwnlispResult;
 
 mod editline {
   use std::io::{self, Write};
@@ -79,7 +133,7 @@ struct OwnlispParser;
 enum Ast {
   Number(i64),
   Builtin(LFunction),
-  Function(Env, VecDeque<Ast>, VecDeque<Ast>),
+  Function(EnvId, VecDeque<String>, VecDeque<Ast>),
   Symbol(String),
   SExpression(VecDeque<Ast>),
   QExpression(VecDeque<Ast>),
@@ -114,7 +168,19 @@ impl std::fmt::Display for Ast {
         res
       }
       Ast::Builtin(_) => write!(f, "<builtin>"),
-      Ast::Function(_, _, _) => write!(f, "<function>"),
+      Ast::Function(_, formals, body) => {
+        //TODO: last case handling for nicer output
+        let mut res = write!(f, "(\\ {{");
+        for formal in formals {
+          res = res.and(write!(f, "{} ", formal));
+        }
+        res = res.and(write!(f, "}} {{"));
+        for bod in body {
+          res = res.and(write!(f, "{} ", bod));
+        }
+        res = res.and(write!(f, "}})"));
+        res
+      }
       Ast::QExpression(values) => {
         let mut res = write!(f, "{{");
         let mut iter = values.into_iter().peekable();
@@ -146,7 +212,7 @@ fn apply_op(op: &str, x: i64, y: i64) -> Result<i64, failure::Error> {
       }
     }
     OP_REM => Ok(x % y),
-    //bODO: Check for if the conversation here is safe.
+    //TODO: Check for if the conversation here is safe.
     OP_EXP => Ok(x.pow(y as u32)),
     OP_MIN => Ok(std::cmp::min(x, y)),
     OP_MAX => Ok(std::cmp::max(x, y)),
@@ -199,7 +265,7 @@ fn build_custom_ast(pair: pest::iterators::Pair<Rule>) -> Ast {
 
 macro_rules! create_evaluate_math {
   ($name:ident, $op:expr) => {
-    fn $name(ast: Ast, _env: &mut Env) -> OwnlispResult {
+    fn $name(ast: Ast, _env: &mut Environments, _active_env: EnvId) -> OwnlispResult {
       if let Ast::SExpression(sexp) = ast {
         evaluate_math_builtin($op, sexp)
       } else {
@@ -252,7 +318,7 @@ fn evaluate_math_builtin(op: &str, sexp: VecDeque<Ast>) -> OwnlispResult {
   }
 }
 
-fn evaluate_eval(ast: Ast, env: &mut Env) -> OwnlispResult {
+fn evaluate_eval(ast: Ast, env: &mut Environments, active_env: EnvId) -> OwnlispResult {
   let mut expr = match ast {
     Ast::SExpression(sexp) => sexp,
     _ => panic!("Wrong call!"),
@@ -260,17 +326,21 @@ fn evaluate_eval(ast: Ast, env: &mut Env) -> OwnlispResult {
   if expr.len() != 1 {
     bail!("Eval only works on a single Q-Expression as argument.")
   } else {
-    let qexpr = evaluate(expr.pop_front().expect("We checked for size."), env)?;
+    let qexpr = evaluate(
+      expr.pop_front().expect("We checked for size."),
+      env,
+      active_env,
+    )?;
     //unpack the QExpression
     if let Ast::QExpression(list) = qexpr {
-      evaluate(Ast::SExpression(list), env)
+      evaluate(Ast::SExpression(list), env, active_env)
     } else {
       bail!("Eval only works with QExpression as argument.")
     }
   }
 }
 
-fn evaluate_join(ast: Ast, _env: &mut Env) -> OwnlispResult {
+fn evaluate_join(ast: Ast, _env: &mut Environments, _active_env: EnvId) -> OwnlispResult {
   let expr = match ast {
     Ast::SExpression(sexp) => sexp,
     _ => panic!("Wrong call!"),
@@ -296,7 +366,7 @@ fn evaluate_join(ast: Ast, _env: &mut Env) -> OwnlispResult {
   }
 }
 
-fn evaluate_head(ast: Ast, env: &mut Env) -> OwnlispResult {
+fn evaluate_head(ast: Ast, env: &mut Environments, active_env: EnvId) -> OwnlispResult {
   let mut expr = match ast {
     Ast::SExpression(sexp) => sexp,
     _ => panic!("Wrong call!"),
@@ -304,7 +374,7 @@ fn evaluate_head(ast: Ast, env: &mut Env) -> OwnlispResult {
   if expr.len() == 1 {
     //Get the first element of the inner QExpression.
     let first_expr = expr.pop_front().expect("We checked the size.");
-    let qexpr = evaluate(first_expr, env)?;
+    let qexpr = evaluate(first_expr, env, active_env)?;
     if let Ast::QExpression(mut list) = qexpr {
       if let Some(first_elem) = list.pop_front() {
         let mut res = VecDeque::new();
@@ -321,7 +391,7 @@ fn evaluate_head(ast: Ast, env: &mut Env) -> OwnlispResult {
   }
 }
 
-fn evaluate_tail(ast: Ast, env: &mut Env) -> OwnlispResult {
+fn evaluate_tail(ast: Ast, env: &mut Environments, active_env: EnvId) -> OwnlispResult {
   let mut expr = match ast {
     Ast::SExpression(sexp) => sexp,
     _ => panic!("Wrong call!"),
@@ -329,7 +399,7 @@ fn evaluate_tail(ast: Ast, env: &mut Env) -> OwnlispResult {
   if expr.len() == 1 {
     //Get the first element of the inner QExpression.
     let first_expr = expr.pop_front().expect("We checked the size.");
-    let qexpr = evaluate(first_expr, env)?;
+    let qexpr = evaluate(first_expr, env, active_env)?;
     if let Ast::QExpression(mut list) = qexpr {
       if list.pop_front().is_some() {
         Ok(Ast::QExpression(list))
@@ -344,7 +414,7 @@ fn evaluate_tail(ast: Ast, env: &mut Env) -> OwnlispResult {
   }
 }
 
-fn evaluate_list(ast: Ast, _env: &mut Env) -> OwnlispResult {
+fn evaluate_list(ast: Ast, _env: &mut Environments, _active_env: EnvId) -> OwnlispResult {
   if let Ast::SExpression(exprs) = ast {
     Ok(Ast::QExpression(exprs))
   } else {
@@ -352,7 +422,7 @@ fn evaluate_list(ast: Ast, _env: &mut Env) -> OwnlispResult {
   }
 }
 
-fn evaluate_lambda(ast: Ast, env: &mut Env) -> OwnlispResult {
+fn evaluate_lambda(ast: Ast, env: &mut Environments, _active_env: EnvId) -> OwnlispResult {
   if let Ast::SExpression(sexpr) = ast {
     //Check that we have two arguments and both are QExpressions
     if sexpr.len() != 2 {
@@ -367,15 +437,14 @@ fn evaluate_lambda(ast: Ast, env: &mut Env) -> OwnlispResult {
       .collect::<Result<VecDeque<_>, _>>()?;
 
     //Check That we only have Symbols in first argument list
-    if !qexprs[0].iter().all(|symbol| match symbol {
-      Ast::Symbol(_) => true,
-      _ => false,
-    }) {
-      bail!("Cannot define non-symbol!")
-    }
+    let formals = qexprs.pop_front().expect("Checked len.").into_iter().map(|symbol| match symbol {
+      Ast::Symbol(sym) => Ok(sym),
+      _ => Err(format_err!("Cannot define non-symbol")),
+    });
+    let formals = formals.collect::<Result<VecDeque<_>, _>>()?;
     Ok(Ast::Function(
-      Env::new(),
-      qexprs.pop_front().expect("Checked for length"),
+      env.create_env(),
+      formals,
       qexprs.pop_front().expect("Checked for length"),
     ))
   } else {
@@ -383,7 +452,7 @@ fn evaluate_lambda(ast: Ast, env: &mut Env) -> OwnlispResult {
   }
 }
 
-fn evaluate_def(ast: Ast, env: &mut Env) -> OwnlispResult {
+fn evaluate_def(ast: Ast, env: &mut Environments, _active_env: EnvId) -> OwnlispResult {
   if let Ast::SExpression(mut sexp) = ast {
     match sexp.pop_front() {
       None => bail!("The def function needs two arguments!"),
@@ -405,7 +474,7 @@ fn evaluate_def(ast: Ast, env: &mut Env) -> OwnlispResult {
           bail!("Redefinition of reserved keyword is not possible!")
         }
         for (i, name) in names_str.into_iter().enumerate() {
-          env.insert(name.to_owned(), sexp[i].clone());
+          env.put_global(name.to_owned(), sexp[i].clone());
         }
         Ok(Ast::EmptyProgram)
       }
@@ -416,7 +485,69 @@ fn evaluate_def(ast: Ast, env: &mut Env) -> OwnlispResult {
   }
 }
 
-fn evaluate_sexpression(ast: Ast, env: &mut Env) -> OwnlispResult {
+fn evaluate_fun(
+  env: &mut Environments,
+  active_env: EnvId,
+  func_env: EnvId,
+  formals: VecDeque<String>,
+  arguments: VecDeque<Ast>,
+  body: VecDeque<Ast>,
+) -> OwnlispResult {
+
+  let mut arguments = arguments;
+  let mut formals = formals;
+
+  while !arguments.is_empty() {
+    let formal = match formals.pop_front() {
+      Some(formal) => formal,
+      None => bail!("Function passed too many arguments"),
+    };
+
+    //Special case for variadic parameters
+    if formal == ":" {
+      let rest_formal = match formals.pop_front() {
+        Some(formal) => formal,
+        None => bail!("Function format invalid. Symbol ':' not followed by a single symbol!"),
+      };
+      if !formals.is_empty() {
+        bail!("More than one symbol after ':'!")
+      }
+      let args = evaluate_list(Ast::SExpression(arguments), env, active_env)?;
+      env.put_local(func_env, rest_formal, args);
+      break;
+    //normal assignment
+    } else {
+      env.put_local(func_env, formal, arguments.pop_front().expect("Arguments was not empty."));
+    }
+  }
+
+  //We have only the varidic stuff left so bind an empty list
+  if !formals.is_empty() && formals[0] == ":" {
+    let _sym = formals.pop_front();
+    //TODO(MA): unify with upper part by pulling it out in seperate function
+    let rest_formal = match formals.pop_front() {
+      Some(formal) => formal,
+      None => bail!("Function format is invalid. Symbol ':' not followed by a single symbol!"),
+    };
+    if !formals.is_empty() {
+      bail!("More than one symbol after ':'!");
+    }
+    env.put_local(func_env, rest_formal, Ast::QExpression(VecDeque::new()));
+  }
+
+  if formals.is_empty() {
+    //Adjust parent environment
+    env.set_parent(func_env, active_env);
+
+    //evaluate the body
+    evaluate(Ast::SExpression(body), env, func_env)
+  } else {
+    //TODO: handle replacement in the body with the local environment to make it even nicer
+    Ok(Ast::Function(func_env, formals, body))
+  }
+}
+
+fn evaluate_sexpression(ast: Ast, env: &mut Environments, active_env: EnvId) -> OwnlispResult {
   let sexp = match ast {
     Ast::SExpression(sexp) => sexp,
     _ => panic!("called it wrong!"),
@@ -424,7 +555,7 @@ fn evaluate_sexpression(ast: Ast, env: &mut Env) -> OwnlispResult {
   //Evaluate all arguments and if we have any errors bail out
   let mut sexp: VecDeque<_> = sexp
     .into_iter()
-    .map(|exp| evaluate(exp, env))
+    .map(|exp| evaluate(exp, env, active_env))
     .collect::<Result<_, _>>()?;
   if sexp.len() == 1 {
     Ok(sexp.pop_front().expect("We checked the length!"))
@@ -433,57 +564,60 @@ fn evaluate_sexpression(ast: Ast, env: &mut Env) -> OwnlispResult {
       //Our arguments are empty so we evaluate to the empty program
       None => Ok(Ast::EmptyProgram),
       //we have a function at the first position
-      Some(Ast::Builtin(fun)) => fun(Ast::SExpression(sexp), env),
+      Some(Ast::Builtin(fun)) => fun(Ast::SExpression(sexp), env, active_env),
+      Some(Ast::Function(env_id, formals, body)) => {
+        evaluate_fun(env, active_env, env_id, formals, sexp, body)
+      }
 
       Some(_) => bail!("The first element in a SExpression needs to be a function."),
     }
   }
 }
 
-fn evaluate(program: Ast, environment: &mut Env) -> OwnlispResult {
+fn evaluate(program: Ast, environment: &mut Environments, active_env: EnvId) -> OwnlispResult {
   match program {
     Ast::Symbol(sym) => {
-      if let Some(ast) = environment.get(&sym) {
+      if let Some(ast) = environment.get(active_env, &sym) {
         Ok(ast.clone())
       } else {
         bail!("Unbound symbol!")
       }
     }
-    Ast::SExpression(_) => evaluate_sexpression(program, environment),
+    Ast::SExpression(_) => evaluate_sexpression(program, environment, active_env),
     //don't do anything for Other types of programs
     _ => Ok(program),
   }
 }
 
-fn add_builtins(env: &mut Env) {
+fn add_builtins(env: &mut Environments) {
   //List functions
-  env.insert(OP_LIST.to_owned(), Ast::Builtin(evaluate_list));
-  env.insert(OP_HEAD.to_owned(), Ast::Builtin(evaluate_head));
-  env.insert(OP_TAIL.to_owned(), Ast::Builtin(evaluate_tail));
-  env.insert(OP_EVAL.to_owned(), Ast::Builtin(evaluate_eval));
-  env.insert(OP_JOIN.to_owned(), Ast::Builtin(evaluate_join));
+  env.put_global(OP_LIST.to_owned(), Ast::Builtin(evaluate_list));
+  env.put_global(OP_HEAD.to_owned(), Ast::Builtin(evaluate_head));
+  env.put_global(OP_TAIL.to_owned(), Ast::Builtin(evaluate_tail));
+  env.put_global(OP_EVAL.to_owned(), Ast::Builtin(evaluate_eval));
+  env.put_global(OP_JOIN.to_owned(), Ast::Builtin(evaluate_join));
 
   //Mathematical Functions
-  env.insert(OP_PLUS.to_owned(), Ast::Builtin(evaluate_plus));
-  env.insert(OP_MINUS.to_owned(), Ast::Builtin(evaluate_minus));
-  env.insert(OP_MULT.to_owned(), Ast::Builtin(evaluate_mult));
-  env.insert(OP_DIV.to_owned(), Ast::Builtin(evaluate_div));
-  env.insert(OP_EXP.to_owned(), Ast::Builtin(evaluate_exp));
-  env.insert(OP_REM.to_owned(), Ast::Builtin(evaluate_rem));
-  env.insert(OP_MIN.to_owned(), Ast::Builtin(evaluate_min));
-  env.insert(OP_MAX.to_owned(), Ast::Builtin(evaluate_max));
+  env.put_global(OP_PLUS.to_owned(), Ast::Builtin(evaluate_plus));
+  env.put_global(OP_MINUS.to_owned(), Ast::Builtin(evaluate_minus));
+  env.put_global(OP_MULT.to_owned(), Ast::Builtin(evaluate_mult));
+  env.put_global(OP_DIV.to_owned(), Ast::Builtin(evaluate_div));
+  env.put_global(OP_EXP.to_owned(), Ast::Builtin(evaluate_exp));
+  env.put_global(OP_REM.to_owned(), Ast::Builtin(evaluate_rem));
+  env.put_global(OP_MIN.to_owned(), Ast::Builtin(evaluate_min));
+  env.put_global(OP_MAX.to_owned(), Ast::Builtin(evaluate_max));
 
   //Def function
-  env.insert(OP_DEF.to_owned(), Ast::Builtin(evaluate_def));
+  env.put_global(OP_DEF.to_owned(), Ast::Builtin(evaluate_def));
   //Func function
-  env.insert(OP_LAMBDA.to_owned(), Ast::Builtin(evaluate_lambda));
+  env.put_global(OP_LAMBDA.to_owned(), Ast::Builtin(evaluate_lambda));
 }
 
 fn main() {
-  println!("Ownlisp version 0.0.4");
+  println!("Ownlisp version 0.0.5");
   println!("Press Ctrl+c to Exit\n");
 
-  let mut environment = Env::new();
+  let mut environment = Environments::new();
   add_builtins(&mut environment);
 
   while let Some(line) = editline::readline("Ownlisp>") {
@@ -496,7 +630,7 @@ fn main() {
     if let Ok(mut pairs) = parsed {
       let program = build_custom_ast(pairs.next().unwrap());
       //println!("{}", program);
-      let evaluated = evaluate(program, &mut environment);
+      let evaluated = evaluate(program, &mut environment, 0);
       match evaluated {
         Ok(result) => println!("{}", result),
         Err(err) => println!("{}", err),
