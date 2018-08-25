@@ -82,7 +82,7 @@ impl Environments {
     self.envs[env].map.insert(key, value);
   }
 
-  fn get(&mut self, active_env: EnvId, key: &String) -> Option<&Ast> {
+  fn get(&self, active_env: EnvId, key: &String) -> Option<&Ast> {
     let mut active_env = active_env;
     //loop through all parents
     while let None = self.envs[active_env].map.get(key) {
@@ -169,14 +169,23 @@ impl std::fmt::Display for Ast {
       }
       Ast::Builtin(_) => write!(f, "<builtin>"),
       Ast::Function(_, formals, body) => {
-        //TODO: last case handling for nicer output
         let mut res = write!(f, "(\\ {{");
-        for formal in formals {
-          res = res.and(write!(f, "{} ", formal));
+        let mut formals = formals.into_iter().peekable();
+        while let Some(formal) = formals.next() {
+          if formals.peek().is_some() {
+            res = res.and(write!(f, "{} ", formal));
+          } else {
+            res = res.and(write!(f, "{}", formal));
+          }
         }
         res = res.and(write!(f, "}} {{"));
-        for bod in body {
-          res = res.and(write!(f, "{} ", bod));
+        let mut body = body.into_iter().peekable();
+        while let Some(bod) = body.next() {
+          if body.peek().is_some() {
+            res = res.and(write!(f, "{} ", bod));
+          } else {
+            res = res.and(write!(f, "{}", bod));
+          }
         }
         res = res.and(write!(f, "}})"));
         res
@@ -437,10 +446,12 @@ fn evaluate_lambda(ast: Ast, env: &mut Environments, _active_env: EnvId) -> Ownl
       .collect::<Result<VecDeque<_>, _>>()?;
 
     //Check That we only have Symbols in first argument list
-    let formals = qexprs.pop_front().expect("Checked len.").into_iter().map(|symbol| match symbol {
-      Ast::Symbol(sym) => Ok(sym),
-      _ => Err(format_err!("Cannot define non-symbol")),
-    });
+    let formals = qexprs.pop_front().expect("Checked len.").into_iter().map(
+      |symbol| match symbol {
+        Ast::Symbol(sym) => Ok(sym),
+        _ => Err(format_err!("Cannot define non-symbol")),
+      },
+    );
     let formals = formals.collect::<Result<VecDeque<_>, _>>()?;
     Ok(Ast::Function(
       env.create_env(),
@@ -485,6 +496,17 @@ fn evaluate_def(ast: Ast, env: &mut Environments, _active_env: EnvId) -> Ownlisp
   }
 }
 
+fn get_variadic_part(formals: &mut VecDeque<String>) -> Result<String, failure::Error> {
+  let rest_formal = match formals.pop_front() {
+    Some(formal) => formal,
+    None => bail!("Function format invalid. Symbol ':' not followed by a single symbol!"),
+  };
+  if !formals.is_empty() {
+    bail!("More than one symbol after ':'!")
+  }
+  Ok(rest_formal)
+}
+
 fn evaluate_fun(
   env: &mut Environments,
   active_env: EnvId,
@@ -493,7 +515,6 @@ fn evaluate_fun(
   arguments: VecDeque<Ast>,
   body: VecDeque<Ast>,
 ) -> OwnlispResult {
-
   let mut arguments = arguments;
   let mut formals = formals;
 
@@ -505,33 +526,24 @@ fn evaluate_fun(
 
     //Special case for variadic parameters
     if formal == ":" {
-      let rest_formal = match formals.pop_front() {
-        Some(formal) => formal,
-        None => bail!("Function format invalid. Symbol ':' not followed by a single symbol!"),
-      };
-      if !formals.is_empty() {
-        bail!("More than one symbol after ':'!")
-      }
+      let rest_formal = get_variadic_part(&mut formals)?;
       let args = evaluate_list(Ast::SExpression(arguments), env, active_env)?;
       env.put_local(func_env, rest_formal, args);
       break;
     //normal assignment
     } else {
-      env.put_local(func_env, formal, arguments.pop_front().expect("Arguments was not empty."));
+      env.put_local(
+        func_env,
+        formal,
+        arguments.pop_front().expect("Arguments was not empty."),
+      );
     }
   }
 
   //We have only the varidic stuff left so bind an empty list
   if !formals.is_empty() && formals[0] == ":" {
     let _sym = formals.pop_front();
-    //TODO(MA): unify with upper part by pulling it out in seperate function
-    let rest_formal = match formals.pop_front() {
-      Some(formal) => formal,
-      None => bail!("Function format is invalid. Symbol ':' not followed by a single symbol!"),
-    };
-    if !formals.is_empty() {
-      bail!("More than one symbol after ':'!");
-    }
+    let rest_formal = get_variadic_part(&mut formals)?;
     env.put_local(func_env, rest_formal, Ast::QExpression(VecDeque::new()));
   }
 
@@ -542,9 +554,32 @@ fn evaluate_fun(
     //evaluate the body
     evaluate(Ast::SExpression(body), env, func_env)
   } else {
-    //TODO: handle replacement in the body with the local environment to make it even nicer
-    Ok(Ast::Function(func_env, formals, body))
+    let new_body = replace_sym_in_body(func_env, env, body);
+    Ok(Ast::Function(func_env, formals, new_body))
   }
+}
+
+fn replace_sym_in_body(active_env: EnvId, env: &Environments, body: VecDeque<Ast>) -> VecDeque<Ast> {
+  let mut res = VecDeque::new();
+  for bod in body.into_iter() {
+    match bod {
+      Ast::Symbol(sym) => {
+        let new_node = match env.get(active_env, &sym) {
+          None => Ast::Symbol(sym),
+          Some(ast) => ast.clone(),
+        };
+        res.push_back(new_node);
+      }
+      Ast::QExpression(qexpr) => {
+        res.push_back(Ast::QExpression(replace_sym_in_body(active_env, env, qexpr)));
+      }
+      Ast::SExpression(sexpr) => {
+        res.push_back(Ast::SExpression(replace_sym_in_body(active_env, env, sexpr)));
+      }
+      _ => res.push_back(bod),
+    }
+  }
+  res
 }
 
 fn evaluate_sexpression(ast: Ast, env: &mut Environments, active_env: EnvId) -> OwnlispResult {

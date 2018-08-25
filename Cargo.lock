@@ -76,7 +76,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 
 [[package]]
 name = "ownlisp"
-version = "0.0.4"
+version = "0.0.5"
 dependencies = [
  "editline 0.1.0",
  "failure 0.1.2 (registry+https://github.com/rust-lang/crates.io-index)",
