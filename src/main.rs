@@ -1,5 +1,6 @@
 //TODO: Errors at the moment are pretty useless. We definitely need to improve
 //our error reporting so people can actually fix their broken programs
+//TODO: refactoring. Verschidene teile in vershieden Dateien etc
 #[cfg(not(windows))]
 extern crate editline;
 
@@ -14,6 +15,8 @@ extern crate lazy_static;
 use pest::Parser;
 use std::collections::HashMap;
 use std::collections::VecDeque;
+use std::fs::File;
+use std::io::prelude::*;
 
 const OP_MIN: &str = "min";
 const OP_MAX: &str = "max";
@@ -26,6 +29,8 @@ const OP_REM: &str = "%";
 const OP_LIST: &str = "list";
 const OP_JOIN: &str = "join";
 const OP_EVAL: &str = "eval";
+const OP_HEAD: &str = "head";
+const OP_TAIL: &str = "tail";
 const OP_DEF: &str = "def";
 const OP_EQ: &str = "=";
 const OP_NE: &str = "!=";
@@ -34,8 +39,10 @@ const OP_LE: &str = "<=";
 const OP_LT: &str = "<";
 const OP_GT: &str = ">";
 const OP_IF: &str = "if";
+const OP_PUT: &str = "let";
 const TRUE: &str = "true";
 const FALSE: &str = "false";
+const LOAD: &str = "load";
 const OP_LAMBDA: &str = "\\";
 
 lazy_static! {
@@ -43,6 +50,7 @@ lazy_static! {
     vec![
       OP_MIN, OP_MAX, OP_PLUS, OP_MINUS, OP_EXP, OP_MULT, OP_DIV, OP_REM, OP_LIST, OP_JOIN,
       OP_EVAL, OP_DEF, OP_LAMBDA, OP_EQ, OP_GE, OP_LE, OP_LT, OP_GT, TRUE, FALSE, OP_IF, OP_NE,
+      LOAD, OP_HEAD, OP_TAIL, OP_PUT,
     ]
   };
 }
@@ -140,6 +148,7 @@ struct OwnlispParser;
 enum Ast {
   Number(i64),
   Bool(bool),
+  Str(String),
   Builtin(LFunction),
   Function(EnvId, VecDeque<String>, VecDeque<Ast>),
   Symbol(String),
@@ -182,13 +191,37 @@ impl std::cmp::PartialEq for Ast {
       }
     } else if let Ast::SExpression(mine) = self {
       if let Ast::SExpression(other) = other {
+        if mine.len() != other.len() {
+          false
+        } else {
+          for (m, o) in mine.iter().zip(other.iter()) {
+            if m != o{
+              return false
+            }
+          }
+          true
+        }
+      } else {
+        false
+      }
+    } else if let Ast::Str(mine) = self {
+      if let Ast::Str(other) = other {
         mine == other
       } else {
         false
       }
     } else if let Ast::QExpression(mine) = self {
       if let Ast::QExpression(other) = other {
-        mine == other
+        if mine.len() != other.len() {
+          false
+        } else {
+          for (m, o) in mine.iter().zip(other.iter()) {
+            if m != o {
+              return false
+            }
+          }
+          true
+        }
       } else {
         false
       }
@@ -225,6 +258,8 @@ impl std::fmt::Display for Ast {
         res = res.and(write!(f, ")"));
         res
       }
+      //TODO: we need to escape control characters here!
+      Ast::Str(s) => write!(f, "{}", s),
       Ast::Bool(b) => write!(f, "{}", b),
       Ast::Builtin(_) => write!(f, "<builtin>"),
       Ast::Function(_, formals, body) => {
@@ -297,6 +332,8 @@ fn build_custom_ast(pair: pest::iterators::Pair<Rule>) -> Ast {
           .parse()
           .expect("We expect to only get valid numbers here"),
       ),
+
+      Rule::string => Ast::Str(pair.as_str().to_owned()),
 
       Rule::symbol => Ast::Symbol(pair.as_str().to_owned()),
 
@@ -480,6 +517,40 @@ fn evaluate_join(
   }
 }
 
+fn evaluate_head(
+  args: VecDeque<Ast>,
+  _env: &mut Environments,
+  _active_env: EnvId,
+) -> OwnlispResult {
+  if args.len() != 1 {
+    bail!("head can only work with a single QExpression!")
+  }
+  let mut args = args;
+  if let Ast::QExpression(mut list) = args.pop_front().expect("checked") {
+    let mut res = VecDeque::new();
+    match list.pop_front() {
+      Some(item) => res.push_back(item),
+      None => {}
+    }
+    Ok(Ast::QExpression(res))
+  } else {
+    bail!("head only works on QExpressions!")
+  }
+}
+
+fn evaluate_tail(args: VecDeque<Ast>, _env: &mut Environments, _active_env: EnvId) -> OwnlispResult {
+  if args.len() != 1 {
+    bail!("tail can only work with a single QExpressio!")
+  }
+  let mut args = args;
+  if let Ast::QExpression(mut list) = args.pop_front().expect("checked") {
+    let _dontcare = list.pop_front();
+    Ok(Ast::QExpression(list))
+  } else {
+    bail!("tail can only work on QExpressions!")
+  }
+}
+
 fn evaluate_list(
   args: VecDeque<Ast>,
   _env: &mut Environments,
@@ -522,7 +593,7 @@ fn evaluate_lambda(
   ))
 }
 
-fn evaluate_def(args: VecDeque<Ast>, env: &mut Environments, _active_env: EnvId) -> OwnlispResult {
+fn evaluate_var(args: VecDeque<Ast>, env: &mut Environments, to_put: EnvId) -> OwnlispResult {
   let mut args = args;
   match args.pop_front() {
     None => bail!("The def function needs two arguments!"),
@@ -544,12 +615,21 @@ fn evaluate_def(args: VecDeque<Ast>, env: &mut Environments, _active_env: EnvId)
         bail!("Redefinition of reserved keyword is not possible!")
       }
       for (name, arg) in names_str.into_iter().zip(args.into_iter()) {
-        env.put_global(name.to_owned(), arg);
+        env.put_local(to_put, name.to_owned(), arg);
       }
       Ok(Ast::EmptyProgram)
     }
     Some(_) => bail!("Function def passed incorrect type!"),
   }
+
+}
+
+fn evaluate_def(args: VecDeque<Ast>, env: &mut Environments, _active_env: EnvId) -> OwnlispResult {
+  evaluate_var(args, env, 0)
+}
+
+fn evaluate_put(args: VecDeque<Ast>, env: &mut Environments, active_env: EnvId) -> OwnlispResult {
+  evaluate_var(args, env, active_env)
 }
 
 fn get_variadic_part(formals: &mut VecDeque<String>) -> Result<String, failure::Error> {
@@ -670,6 +750,42 @@ fn evaluate_if(args: VecDeque<Ast>, env: &mut Environments, active_env: EnvId) -
   }
 }
 
+fn load_ownlisp(args: VecDeque<Ast>, env: &mut Environments, _active_env: EnvId) -> OwnlispResult {
+  let mut args = args;
+  match args.pop_front() {
+    Some(Ast::Str(s)) => {
+      if !args.is_empty() {
+        bail!("load only works with one string argument.")
+      }
+      let file_name = s.trim_matches('"');
+      let mut f = match File::open(file_name) {
+        Ok(f) => f,
+        Err(e) => bail!("Could not open file {}! ({})", s, e),
+      };
+      let mut contents = String::new();
+      f.read_to_string(&mut contents)?;
+      let parsed = OwnlispParser::parse(Rule::program, &contents);
+      match parsed {
+        Err(e) => bail!("Couldn't parse file: {}", e),
+        Ok(mut pairs) => {
+          let ast = build_custom_ast(pairs.next().unwrap());
+          //try to evaluate every expression seperately
+          if let Ast::SExpression(sexp) = ast {
+            for prog in sexp {
+              match evaluate(prog, env, 0) {
+                Ok(_) => continue,
+                Err(e) => return Err(e),
+              }
+            }
+          }
+          Ok(Ast::EmptyProgram)
+        }
+      }
+    }
+    _ => bail!("load only works with strings as argument."),
+  }
+}
+
 fn evaluate_sexpression(ast: Ast, env: &mut Environments, active_env: EnvId) -> OwnlispResult {
   let sexp = match ast {
     Ast::SExpression(sexp) => sexp,
@@ -717,6 +833,8 @@ fn add_builtins(env: &mut Environments) {
   env.put_global(OP_LIST.to_owned(), Ast::Builtin(evaluate_list));
   env.put_global(OP_EVAL.to_owned(), Ast::Builtin(evaluate_eval));
   env.put_global(OP_JOIN.to_owned(), Ast::Builtin(evaluate_join));
+  env.put_global(OP_HEAD.to_owned(), Ast::Builtin(evaluate_head));
+  env.put_global(OP_TAIL.to_owned(), Ast::Builtin(evaluate_tail));
 
   //Mathematical Functions
   env.put_global(OP_PLUS.to_owned(), Ast::Builtin(evaluate_plus));
@@ -747,12 +865,16 @@ fn add_builtins(env: &mut Environments) {
 
   //Def function
   env.put_global(OP_DEF.to_owned(), Ast::Builtin(evaluate_def));
+  env.put_global(OP_PUT.to_owned(), Ast::Builtin(evaluate_put));
+
   //Func function
   env.put_global(OP_LAMBDA.to_owned(), Ast::Builtin(evaluate_lambda));
+
+  env.put_global(LOAD.to_owned(), Ast::Builtin(load_ownlisp));
 }
 
 fn main() {
-  println!("Ownlisp version 0.0.6");
+  println!("Ownlisp version 0.0.7");
   println!("Press Ctrl+c to Exit\n");
 
   let mut environment = Environments::new();

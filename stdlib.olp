@@ -1,0 +1,123 @@
+; prelude
+
+; Atoms
+(def {nil} {})
+
+;function defintion
+(def {fun} (\ {args body} {
+  def (head args) (\ (tail args) body)
+}))
+
+(fun {unpack f l} {
+  eval (join (list f) l)
+})
+
+(fun {pack f:xs} {
+  {f xs}
+})
+
+(fun {comp f g x} {
+  f (g x)
+})
+
+;several things in sequence
+(fun {do:args} {
+  if (= args nil)
+    {nil}
+    {last args}
+})
+
+;logical functions
+(fun {! x} {
+  if (x) 
+    {false} 
+    {true}
+})
+
+(fun {& x y} {
+  if (x)
+    {y}
+    {false}
+})
+
+(fun {| x y} {
+  if (x)  
+    {true}
+    {y}
+})
+
+;list functions
+(fun {fst l} {
+  eval (head l)
+})
+
+(fun {len l} {
+  if (= l nil)
+    {0}
+    {+ 1 (len (tail l))}
+})
+
+(fun {nth n l} {
+  if (<= n 0)
+    {fst l}
+    {nth (- n 1) (tail l)}
+})
+
+(fun {last l} {
+  nth (- 1 (len l)) l
+})
+
+(fun {take n l} {
+  if (<= n 0)
+    {l}
+    {join (head l) (take (- n 1) (tail l))}
+})
+
+(fun {drop n l} {
+  if (<= n 0)
+    {l}
+    {drop (- n 1) (tail l)}
+})
+
+(fun {split n l} {
+  list (take n l) (drop n l)
+})
+
+(fun {elem x l} {
+  if (= l nil)
+    {false}
+    {if (= x fst l)
+      {true}
+      {elem x (tail l)}
+    }
+})
+
+(fun {map f l} {
+  if (= l nil)
+    {nil}
+    {join (list (f (fst l))) (map f (tail l))}
+})
+
+(fun {filter pred l} {
+  if (= l nil)
+    {nil}
+    {join (if (pred (fst l)) 
+            {head l} 
+            {nil})
+          (filter pred (tail l))
+    }
+})
+
+(fun {foldl f base l} {
+  if (= l nil)
+    {base}
+    {foldl f (f base (fst l)) (tail l)}
+})
+
+(fun {sum l} {
+  foldl + 0 l
+})
+
+(fun {prod l} {
+  foldl * 1 l
+})
