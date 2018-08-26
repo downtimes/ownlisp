@@ -5,16 +5,12 @@
     "version": "0.2.0",
     "configurations": [
         {
-            "preLaunchTask": "cargo build",
-            "name": "(Windows) Launch",
-            "type": "cppvsdbg",
+            "type": "gdb",
             "request": "launch",
-            "program": "${workspaceRoot}/target/debug/ownlisp.exe",
-            "args": [],
-            "stopAtEntry": false,
-            "cwd": "${workspaceFolder}",
-            "environment": [],
-            "externalConsole": true
+            "name": "(Windows)Debug",
+            "target": "./target/debug/ownlisp.exe",
+            "cwd": "${workspaceRoot}",
+            "terminal": ""
         },
         {
             "type": "lldb",
@@ -30,19 +26,5 @@
             "cwd": "${workspaceFolder}",
             "terminal": "external",
         },
-        {
-            "type": "lldb",
-            "request": "launch",
-            "name": "Debug tests in ownlisp",
-            "cargo": {
-                "args": [
-                    "test",
-                    "--no-run",
-                    "--bin=ownlisp"
-                ]
-            },
-            "args": [],
-            "cwd": "${workspaceFolder}"
-        }
     ]
 }

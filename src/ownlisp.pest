@@ -11,5 +11,4 @@ symbols = _{'a'..'z' | 'A'..'Z' | '0'..'9' | "_" | "+" | "/" | "*" | "-" | "\\"
 digit = _{'0'..'9'}
 
 whitespace = _{" " | "\n" | "\r\n" }
-//Still needs some refinement with newlines!
 comment = _{ ";" ~ (!("\n" | "\r\n") ~ any)* }

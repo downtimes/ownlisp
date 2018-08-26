@@ -1,6 +1,7 @@
 //TODO: Errors at the moment are pretty useless. We definitely need to improve
 //our error reporting so people can actually fix their broken programs
 //TODO: refactoring. Verschidene teile in vershieden Dateien etc
+//TODO: write vscode plugin for language support
 #[cfg(not(windows))]
 extern crate editline;
 
@@ -43,6 +44,7 @@ const OP_PUT: &str = "let";
 const TRUE: &str = "true";
 const FALSE: &str = "false";
 const LOAD: &str = "load";
+const PRINT: &str = "print";
 const OP_LAMBDA: &str = "\\";
 
 lazy_static! {
@@ -50,7 +52,7 @@ lazy_static! {
     vec![
       OP_MIN, OP_MAX, OP_PLUS, OP_MINUS, OP_EXP, OP_MULT, OP_DIV, OP_REM, OP_LIST, OP_JOIN,
       OP_EVAL, OP_DEF, OP_LAMBDA, OP_EQ, OP_GE, OP_LE, OP_LT, OP_GT, TRUE, FALSE, OP_IF, OP_NE,
-      LOAD, OP_HEAD, OP_TAIL, OP_PUT,
+      LOAD, OP_HEAD, OP_TAIL, OP_PUT, PRINT,
     ]
   };
 }
@@ -386,6 +388,7 @@ create_evaluate_math!(evaluate_min, OP_MIN);
 create_evaluate_math!(evaluate_max, OP_MAX);
 
 fn evaluate_math_builtin(op: &str, sexp: VecDeque<Ast>) -> OwnlispResult {
+  println!("evaluating math");
   //fast bailout if we don't only have numbers as operands
   let sexp: Vec<_> = sexp
     .into_iter()
@@ -556,6 +559,12 @@ fn evaluate_list(
   _env: &mut Environments,
   _active_env: EnvId,
 ) -> OwnlispResult {
+  //flatten empty stuff away
+  let args = args.into_iter().filter(|arg| match arg {
+    Ast::QExpression(qexpr) => !qexpr.is_empty(),
+    Ast::SExpression(sexpr) => !sexpr.is_empty(),
+    _ => true,
+  }).collect();
   Ok(Ast::QExpression(args))
 }
 
@@ -654,6 +663,7 @@ fn evaluate_fun(
   let mut arguments = arguments;
   let mut formals = formals;
 
+  print!("evaluating function: ");
   while !arguments.is_empty() {
     let formal = match formals.pop_front() {
       Some(formal) => formal,
@@ -664,20 +674,22 @@ fn evaluate_fun(
     if formal == ":" {
       let rest_formal = get_variadic_part(&mut formals)?;
       let args = evaluate_list(arguments, env, active_env)?;
+      println!("variadic: {} = {}", rest_formal, args);
       env.put_local(func_env, rest_formal, args);
       break;
     //normal assignment
     } else {
+      let arg = arguments.pop_front().expect("Arguments was not empty.");
+      println!("bind: {} {}", formal, arg);
       env.put_local(
-        func_env,
-        formal,
-        arguments.pop_front().expect("Arguments was not empty."),
+        func_env, formal, arg
       );
     }
   }
 
   //We have only the varidic stuff left so bind an empty list
   if !formals.is_empty() && formals[0] == ":" {
+    println!("getting rid of empty formals");
     let _sym = formals.pop_front();
     let rest_formal = get_variadic_part(&mut formals)?;
     env.put_local(func_env, rest_formal, Ast::QExpression(VecDeque::new()));
@@ -688,8 +700,11 @@ fn evaluate_fun(
     env.set_parent(func_env, active_env);
 
     //evaluate the body
-    evaluate(Ast::SExpression(body), env, func_env)
+    let body = Ast::SExpression(body);
+    println!("calling evaluate: {}", body);
+    evaluate(body, env, func_env)
   } else {
+    println!("returning partial functio");
     let new_body = replace_sym_in_body(func_env, env, body);
     Ok(Ast::Function(func_env, formals, new_body))
   }
@@ -750,6 +765,21 @@ fn evaluate_if(args: VecDeque<Ast>, env: &mut Environments, active_env: EnvId) -
   }
 }
 
+fn print_string(args: VecDeque<Ast>, _env: &mut Environments, _act_env: EnvId) -> OwnlispResult {
+  let mut args = args;
+  match args.pop_front() {
+    Some(Ast::Str(s)) => {
+      if !args.is_empty() {
+        bail!("Too many arguments for the print call!")
+      }
+      println!("{}", s);
+      Ok(Ast::EmptyProgram)
+    }
+    _ => bail!("Wrong argument type for the print call!"),
+  }
+
+}
+
 fn load_ownlisp(args: VecDeque<Ast>, env: &mut Environments, _active_env: EnvId) -> OwnlispResult {
   let mut args = args;
   match args.pop_front() {
@@ -800,7 +830,7 @@ fn evaluate_sexpression(ast: Ast, env: &mut Environments, active_env: EnvId) -> 
     Ok(sexp.pop_front().expect("We checked the length!"))
   } else {
     match sexp.pop_front() {
-      //Our arguments are empty so we evaluate to the empty program
+      //Our arguments are empty so we evaluate to an empty expression
       None => Ok(Ast::EmptyProgram),
       //we have a function at the first position
       Some(Ast::Builtin(fun)) => fun(sexp, env, active_env),
@@ -870,7 +900,9 @@ fn add_builtins(env: &mut Environments) {
   //Func function
   env.put_global(OP_LAMBDA.to_owned(), Ast::Builtin(evaluate_lambda));
 
+  //String functions
   env.put_global(LOAD.to_owned(), Ast::Builtin(load_ownlisp));
+  env.put_global(PRINT.to_owned(), Ast::Builtin(print_string));
 }
 
 fn main() {
