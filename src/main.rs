@@ -3,6 +3,8 @@
 //TODO: implement error printing for lisp users
 //TODO: refactoring. Verschidene teile in vershieden Dateien etc
 //TODO: write vscode plugin for language support
+//TODO: To make the language more useful: add GC, add doubles, add user defined types, add os
+//interaction layer, add tail call optimization, type inferance, lexical scoping
 #[cfg(not(windows))]
 extern crate editline;
 

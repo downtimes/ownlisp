@@ -1,0 +1,33 @@
+{
+    "name": "ownlisp",
+    "displayName": "Ownlisp",
+    "version": "0.0.1",
+    "description": "Adds support for the Ownlisp language",
+    "author": {
+        "name": "Michael Auracher"
+    },
+    "categories": [
+        "Programming Languages"
+    ],
+    "activationEvents": [
+        "onLanguage:ownlisp"
+    ],
+    "contributes": {
+        "languages": [
+            {
+                "id": "ownlisp",
+                "configuration": "./language-configuration.json",
+                "extensions": [
+                    ".olp"
+                ]
+            }
+        ],
+        "grammars": [
+            {
+                "language": "ownlisp",
+                "scopeName": "source.ownlisp",
+                "path": "./syntaxes/ownlisp.tmLanguage.json"
+            }
+        ]
+    }
+}

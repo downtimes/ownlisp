@@ -1,0 +1,11 @@
+{
+    "$schema": "http://json-schema.org/schema#",
+    "name": "Ownlisp syntax",
+    "scopeName": "source.olp",
+    "repository": {
+        "patterns": [
+
+        ]
+
+    }
+}
