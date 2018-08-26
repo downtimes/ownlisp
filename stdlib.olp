@@ -2,6 +2,7 @@
 
 ; Atoms
 (def {nil} {})
+(def {otherwise} true)
 
 ;function defintion
 (def {fun} (\ {args body} {
@@ -51,10 +52,18 @@
   eval (head l)
 })
 
+(fun {snd l} {
+  eval (head (tail l))
+})
+
 (fun {len l} {
+  foldl (\ {acc li} {+ acc 1}) 0 l
+})
+
+(fun {reverse l} {
   if (= l nil)
-    {0}
-    {+ 1 (len (tail l))}
+    {nil}
+    {join (reverse (tail l)) (head l)}
 })
 
 (fun {nth n l} {
@@ -64,7 +73,7 @@
 })
 
 (fun {last l} {
-  nth (- 1 (len l)) l
+  nth (- (len l) 1) l
 })
 
 (fun {take n l} {
@@ -84,12 +93,11 @@
 })
 
 (fun {elem x l} {
-  if (= l nil)
-    {false}
-    {if (= x fst l)
-      {true}
-      {elem x (tail l)}
-    }
+  foldl (\ {acc li} {
+    if (= li x)
+      {| acc true}
+      {| acc false}
+  }) false l
 })
 
 (fun {map f l} {
@@ -120,4 +128,23 @@
 
 (fun {prod l} {
   foldl * 1 l
+})
+
+;conditional functions
+(fun {select:cases} {
+  if (= cases nil)
+    {}
+    {if (fst (fst cases)) 
+      {snd (fst cases)} 
+      {unpack select (tail cases)}
+    }
+})
+
+(fun {case x:cases} {
+  if (= cases nil)
+    {}
+    {if (= x (fst (fst cases)))
+      {snd (fst cases)}
+      {unpack case (join (list x) (tail cases))}
+    }
 })

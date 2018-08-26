@@ -1,5 +1,6 @@
 //TODO: Errors at the moment are pretty useless. We definitely need to improve
 //our error reporting so people can actually fix their broken programs
+//TODO: implement error printing for lisp users
 //TODO: refactoring. Verschidene teile in vershieden Dateien etc
 //TODO: write vscode plugin for language support
 #[cfg(not(windows))]
@@ -59,7 +60,6 @@ lazy_static! {
 
 type EnvId = usize;
 
-#[derive(Clone)]
 struct Env {
   parent_id: Option<EnvId>,
   map: HashMap<String, Ast>,
@@ -99,10 +99,9 @@ impl Environments {
     new_id
   }
 
-  //TODO: think about when it is okay to actually delete environments!
-//  fn delete_env(&mut self, id: EnvId) {
-//    let _dont_care = self.envs.remove(&id);
-//  }
+ // fn delete_env(&mut self, id: EnvId) {
+ //   let _dont_care = self.envs.remove(&id);
+ // }
 
   fn set_parent(&mut self, current: EnvId, parent: EnvId) {
     if !self.envs.contains_key(&current) {
@@ -129,7 +128,7 @@ impl Environments {
     });
   }
 
-  fn get(&self, active_env: EnvId, key: &String) -> Option<&Ast> {
+  fn get(&mut self, active_env: EnvId, key: &String) -> Option<Ast> {
     let mut active_env = active_env;
     //loop through all parents
     while let None = self.envs[&active_env].map.get(key) {
@@ -138,7 +137,11 @@ impl Environments {
         Some(id) => active_env = id,
       }
     }
-    self.envs[&active_env].map.get(key)
+    //TODO: extremely unnice. Work on overhaul of environment system!
+    let val = self.envs.get_mut(&active_env).expect("checked").map.remove(key).expect("checked");
+    let res = Some(val.clone(self));
+    self.put_local(active_env, key.clone(), val);
+    res
   }
 }
 
@@ -176,7 +179,6 @@ const _GRAMMAR: &str = include_str!("ownlisp.pest");
 #[grammar = "ownlisp.pest"]
 struct OwnlispParser;
 
-#[derive(Clone)]
 enum Ast {
   Number(i64),
   Bool(bool),
@@ -187,6 +189,35 @@ enum Ast {
   SExpression(VecDeque<Ast>),
   QExpression(VecDeque<Ast>),
   EmptyProgram,
+}
+
+impl Ast {
+  fn clone(&self, env: &mut Environments) -> Ast {
+    match self {
+      Ast::Number(num) => Ast::Number(*num),
+      Ast::Bool(b) => Ast::Bool(*b),
+      Ast::Str(s) => Ast::Str(s.clone()),
+      Ast::Builtin(f) => Ast::Builtin(f.clone()),
+      //Special case for cloning functions. We always open a new environment and
+      //set it's parent to the same parent as the old one
+      Ast::Function(id, form, body) => {
+        let new_id = env.create_env();
+        env.set_parent(new_id, *id);
+        let new_body = body.into_iter().map(|ast| ast.clone(env)).collect();
+        Ast::Function(new_id, form.clone(), new_body)
+      }
+      Ast::Symbol(s) => Ast::Symbol(s.clone()),
+      Ast::SExpression(exp) => {
+        let new_exp = exp.into_iter().map(|ast| ast.clone(env)).collect();
+        Ast::SExpression(new_exp)
+      }
+      Ast::QExpression(exp) => {
+        let new_exp = exp.into_iter().map(|ast| ast.clone(env)).collect();
+        Ast::QExpression(new_exp)
+      }
+      Ast::EmptyProgram => Ast::EmptyProgram,
+    }
+  }
 }
 
 impl std::cmp::PartialEq for Ast {
@@ -290,7 +321,6 @@ impl std::fmt::Display for Ast {
         res = res.and(write!(f, ")"));
         res
       }
-      //TODO: we need to escape control characters here!
       Ast::Str(s) => write!(f, "{}", s),
       Ast::Bool(b) => write!(f, "{}", b),
       Ast::Builtin(_) => write!(f, "<builtin>"),
@@ -631,8 +661,10 @@ fn evaluate_lambda(
       _ => Err(format_err!("Cannot define non-symbol")),
     });
   let formals = formals.collect::<Result<VecDeque<_>, _>>()?;
+  let func_env = env.create_env();
+  env.set_parent(func_env, 0);
   Ok(Ast::Function(
-    env.create_env(),
+    func_env,
     formals,
     qexprs.pop_front().expect("Checked for length"),
   ))
@@ -698,7 +730,6 @@ fn evaluate_fun(
   let mut arguments = arguments;
   let mut formals = formals;
 
-  print!("evaluating function: ");
   while !arguments.is_empty() {
     let formal = match formals.pop_front() {
       Some(formal) => formal,
@@ -726,49 +757,12 @@ fn evaluate_fun(
   }
 
   if formals.is_empty() {
-    //Adjust parent environment if we are not recusring
-    if func_env != parent_env {
-      env.set_parent(func_env, parent_env);
-    }
-
     //evaluate the body
     let body = Ast::SExpression(body);
     evaluate(body, env, func_env)
   } else {
-    let new_body = replace_sym_in_body(func_env, env, body);
-    Ok(Ast::Function(func_env, formals, new_body))
+    Ok(Ast::Function(func_env, formals, body))
   }
-}
-
-fn replace_sym_in_body(
-  active_env: EnvId,
-  env: &Environments,
-  body: VecDeque<Ast>,
-) -> VecDeque<Ast> {
-  let mut res = VecDeque::new();
-  for bod in body.into_iter() {
-    match bod {
-      Ast::Symbol(sym) => {
-        let new_node = match env.get(active_env, &sym) {
-          None => Ast::Symbol(sym),
-          Some(ast) => ast.clone(),
-        };
-        res.push_back(new_node);
-      }
-      Ast::QExpression(qexpr) => {
-        res.push_back(Ast::QExpression(replace_sym_in_body(
-          active_env, env, qexpr,
-        )));
-      }
-      Ast::SExpression(sexpr) => {
-        res.push_back(Ast::SExpression(replace_sym_in_body(
-          active_env, env, sexpr,
-        )));
-      }
-      _ => res.push_back(bod),
-    }
-  }
-  res
 }
 
 fn evaluate_if(args: VecDeque<Ast>, env: &mut Environments, active_env: EnvId) -> OwnlispResult {
@@ -876,7 +870,7 @@ fn evaluate(program: Ast, environment: &mut Environments, active_env: EnvId) -> 
   match program {
     Ast::Symbol(sym) => {
       if let Some(ast) = environment.get(active_env, &sym) {
-        Ok(ast.clone())
+        Ok(ast)
       } else {
         bail!("Unbound symbol '{}'!", sym)
       }
