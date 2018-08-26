@@ -13,7 +13,7 @@
 })
 
 (fun {pack f:xs} {
-  {f xs}
+  f xs
 })
 
 (fun {comp f g x} {

@@ -66,49 +66,79 @@ struct Env {
 }
 
 struct Environments {
-  envs: Vec<Env>,
+  last_id: usize,
+  envs: HashMap<EnvId, Env>,
 }
 
 impl Environments {
   fn new() -> Environments {
-    Environments {
-      envs: vec![Env {
+    let mut env = HashMap::new();
+    env.insert(
+      0,
+      Env {
         parent_id: None,
         map: HashMap::new(),
-      }],
+      },
+    );
+    Environments {
+      last_id: 0,
+      envs: env,
     }
   }
 
   fn create_env(&mut self) -> EnvId {
-    self.envs.push(Env {
-      parent_id: None,
-      map: HashMap::new(),
-    });
-    self.envs.len() - 1
+    self.last_id += 1;
+    let new_id = self.last_id;
+    self.envs.insert(
+      new_id,
+      Env {
+        parent_id: None,
+        map: HashMap::new(),
+      }
+    );
+    new_id
   }
 
-  fn set_parent(&mut self, env: EnvId, parent: EnvId) {
-    self.envs[env].parent_id = Some(parent);
+  //TODO: think about when it is okay to actually delete environments!
+//  fn delete_env(&mut self, id: EnvId) {
+//    let _dont_care = self.envs.remove(&id);
+//  }
+
+  fn set_parent(&mut self, current: EnvId, parent: EnvId) {
+    if !self.envs.contains_key(&current) {
+      panic!("Tried to access non existent environment!");
+    }
+    self
+      .envs
+      .entry(current)
+      .and_modify(|env| env.parent_id = Some(parent));
   }
 
   fn put_global(&mut self, key: String, value: Ast) {
-    self.envs[0].map.insert(key, value);
+    self.envs.entry(0).and_modify(|env| {
+      env.map.insert(key, value);
+    });
   }
 
-  fn put_local(&mut self, env: EnvId, key: String, value: Ast) {
-    self.envs[env].map.insert(key, value);
+  fn put_local(&mut self, env_id: EnvId, key: String, value: Ast) {
+    if !self.envs.contains_key(&env_id) {
+      panic!("Tried to put into non existent environment!");
+    }
+    self.envs.entry(env_id).and_modify(|env| {
+      env.map.insert(key, value);
+    });
   }
 
   fn get(&self, active_env: EnvId, key: &String) -> Option<&Ast> {
     let mut active_env = active_env;
     //loop through all parents
-    while let None = self.envs[active_env].map.get(key) {
-      match self.envs[active_env].parent_id {
+    while let None = self.envs[&active_env].map.get(key) {
+      match self.envs[&active_env].parent_id {
         None => return None,
         Some(id) => active_env = id,
       }
     }
-    self.envs[active_env].map.get(key)
+    self.envs[&active_env].map.get(key)
   }
 }
 
@@ -197,8 +227,8 @@ impl std::cmp::PartialEq for Ast {
           false
         } else {
           for (m, o) in mine.iter().zip(other.iter()) {
-            if m != o{
-              return false
+            if m != o {
+              return false;
             }
           }
           true
@@ -219,7 +249,7 @@ impl std::cmp::PartialEq for Ast {
         } else {
           for (m, o) in mine.iter().zip(other.iter()) {
             if m != o {
-              return false
+              return false;
             }
           }
           true
@@ -388,7 +418,6 @@ create_evaluate_math!(evaluate_min, OP_MIN);
 create_evaluate_math!(evaluate_max, OP_MAX);
 
 fn evaluate_math_builtin(op: &str, sexp: VecDeque<Ast>) -> OwnlispResult {
-  println!("evaluating math");
   //fast bailout if we don't only have numbers as operands
   let sexp: Vec<_> = sexp
     .into_iter()
@@ -541,7 +570,11 @@ fn evaluate_head(
   }
 }
 
-fn evaluate_tail(args: VecDeque<Ast>, _env: &mut Environments, _active_env: EnvId) -> OwnlispResult {
+fn evaluate_tail(
+  args: VecDeque<Ast>,
+  _env: &mut Environments,
+  _active_env: EnvId,
+) -> OwnlispResult {
   if args.len() != 1 {
     bail!("tail can only work with a single QExpressio!")
   }
@@ -560,11 +593,14 @@ fn evaluate_list(
   _active_env: EnvId,
 ) -> OwnlispResult {
   //flatten empty stuff away
-  let args = args.into_iter().filter(|arg| match arg {
-    Ast::QExpression(qexpr) => !qexpr.is_empty(),
-    Ast::SExpression(sexpr) => !sexpr.is_empty(),
-    _ => true,
-  }).collect();
+  let args = args
+    .into_iter()
+    .filter(|arg| match arg {
+      Ast::QExpression(qexpr) => !qexpr.is_empty(),
+      Ast::SExpression(sexpr) => !sexpr.is_empty(),
+      _ => true,
+    })
+    .collect();
   Ok(Ast::QExpression(args))
 }
 
@@ -630,7 +666,6 @@ fn evaluate_var(args: VecDeque<Ast>, env: &mut Environments, to_put: EnvId) -> O
     }
     Some(_) => bail!("Function def passed incorrect type!"),
   }
-
 }
 
 fn evaluate_def(args: VecDeque<Ast>, env: &mut Environments, _active_env: EnvId) -> OwnlispResult {
@@ -654,7 +689,7 @@ fn get_variadic_part(formals: &mut VecDeque<String>) -> Result<String, failure::
 
 fn evaluate_fun(
   env: &mut Environments,
-  active_env: EnvId,
+  parent_env: EnvId,
   func_env: EnvId,
   formals: VecDeque<String>,
   arguments: VecDeque<Ast>,
@@ -673,38 +708,33 @@ fn evaluate_fun(
     //Special case for variadic parameters
     if formal == ":" {
       let rest_formal = get_variadic_part(&mut formals)?;
-      let args = evaluate_list(arguments, env, active_env)?;
-      println!("variadic: {} = {}", rest_formal, args);
+      let args = evaluate_list(arguments, env, parent_env)?;
       env.put_local(func_env, rest_formal, args);
       break;
     //normal assignment
     } else {
       let arg = arguments.pop_front().expect("Arguments was not empty.");
-      println!("bind: {} {}", formal, arg);
-      env.put_local(
-        func_env, formal, arg
-      );
+      env.put_local(func_env, formal, arg);
     }
   }
 
   //We have only the varidic stuff left so bind an empty list
   if !formals.is_empty() && formals[0] == ":" {
-    println!("getting rid of empty formals");
     let _sym = formals.pop_front();
     let rest_formal = get_variadic_part(&mut formals)?;
     env.put_local(func_env, rest_formal, Ast::QExpression(VecDeque::new()));
   }
 
   if formals.is_empty() {
-    //Adjust parent environment
-    env.set_parent(func_env, active_env);
+    //Adjust parent environment if we are not recusring
+    if func_env != parent_env {
+      env.set_parent(func_env, parent_env);
+    }
 
     //evaluate the body
     let body = Ast::SExpression(body);
-    println!("calling evaluate: {}", body);
     evaluate(body, env, func_env)
   } else {
-    println!("returning partial functio");
     let new_body = replace_sym_in_body(func_env, env, body);
     Ok(Ast::Function(func_env, formals, new_body))
   }
@@ -777,7 +807,6 @@ fn print_string(args: VecDeque<Ast>, _env: &mut Environments, _act_env: EnvId) -
     }
     _ => bail!("Wrong argument type for the print call!"),
   }
-
 }
 
 fn load_ownlisp(args: VecDeque<Ast>, env: &mut Environments, _active_env: EnvId) -> OwnlispResult {
@@ -921,7 +950,6 @@ fn main() {
     let parsed = OwnlispParser::parse(Rule::program, line);
     if let Ok(mut pairs) = parsed {
       let program = build_custom_ast(pairs.next().unwrap());
-      //println!("{}", program);
       let evaluated = evaluate(program, &mut environment, 0);
       match evaluated {
         Ok(result) => println!("{}", result),
