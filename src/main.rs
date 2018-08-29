@@ -16,20 +16,17 @@ extern crate failure;
 #[macro_use]
 extern crate lazy_static;
 
+mod math;
+mod env;
+mod ast;
+
 use pest::Parser;
-use std::collections::HashMap;
+use env::{Environments, EnvId};
 use std::collections::VecDeque;
 use std::fs::File;
 use std::io::prelude::*;
+use ast::Ast;
 
-const OP_MIN: &str = "min";
-const OP_MAX: &str = "max";
-const OP_PLUS: &str = "+";
-const OP_MINUS: &str = "-";
-const OP_EXP: &str = "^";
-const OP_MULT: &str = "*";
-const OP_DIV: &str = "/";
-const OP_REM: &str = "%";
 const OP_LIST: &str = "list";
 const OP_JOIN: &str = "join";
 const OP_EVAL: &str = "eval";
@@ -38,10 +35,6 @@ const OP_TAIL: &str = "tail";
 const OP_DEF: &str = "def";
 const OP_EQ: &str = "=";
 const OP_NE: &str = "!=";
-const OP_GE: &str = ">=";
-const OP_LE: &str = "<=";
-const OP_LT: &str = "<";
-const OP_GT: &str = ">";
 const OP_IF: &str = "if";
 const OP_PUT: &str = "let";
 const TRUE: &str = "true";
@@ -53,99 +46,37 @@ const OP_LAMBDA: &str = "\\";
 lazy_static! {
   static ref RESERVED_WORDS: Vec<&'static str> = {
     vec![
-      OP_MIN, OP_MAX, OP_PLUS, OP_MINUS, OP_EXP, OP_MULT, OP_DIV, OP_REM, OP_LIST, OP_JOIN,
-      OP_EVAL, OP_DEF, OP_LAMBDA, OP_EQ, OP_GE, OP_LE, OP_LT, OP_GT, TRUE, FALSE, OP_IF, OP_NE,
-      LOAD, OP_HEAD, OP_TAIL, OP_PUT, PRINT,
+      math::OP_MIN,
+      math::OP_MAX,
+      math::OP_PLUS,
+      math::OP_MINUS,
+      math::OP_EXP,
+      math::OP_MULT,
+      math::OP_DIV,
+      math::OP_REM,
+      math::OP_GE,
+      math::OP_LE,
+      math::OP_LT,
+      math::OP_GT,
+      OP_LIST,
+      OP_JOIN,
+      OP_EVAL,
+      OP_DEF,
+      OP_LAMBDA,
+      OP_EQ,
+      TRUE,
+      FALSE,
+      OP_IF,
+      OP_NE,
+      LOAD,
+      OP_HEAD,
+      OP_TAIL,
+      OP_PUT,
+      PRINT,
     ]
   };
 }
 
-type EnvId = usize;
-
-struct Env {
-  parent_id: Option<EnvId>,
-  map: HashMap<String, Ast>,
-}
-
-struct Environments {
-  last_id: usize,
-  envs: HashMap<EnvId, Env>,
-}
-
-impl Environments {
-  fn new() -> Environments {
-    let mut env = HashMap::new();
-    env.insert(
-      0,
-      Env {
-        parent_id: None,
-        map: HashMap::new(),
-      },
-    );
-    Environments {
-      last_id: 0,
-      envs: env,
-    }
-  }
-
-  fn create_env(&mut self) -> EnvId {
-    self.last_id += 1;
-    let new_id = self.last_id;
-    self.envs.insert(
-      new_id,
-      Env {
-        parent_id: None,
-        map: HashMap::new(),
-      }
-    );
-    new_id
-  }
-
- // fn delete_env(&mut self, id: EnvId) {
- //   let _dont_care = self.envs.remove(&id);
- // }
-
-  fn set_parent(&mut self, current: EnvId, parent: EnvId) {
-    if !self.envs.contains_key(&current) {
-      panic!("Tried to access non existent environment!");
-    }
-    self
-      .envs
-      .entry(current)
-      .and_modify(|env| env.parent_id = Some(parent));
-  }
-
-  fn put_global(&mut self, key: String, value: Ast) {
-    self.envs.entry(0).and_modify(|env| {
-      env.map.insert(key, value);
-    });
-  }
-
-  fn put_local(&mut self, env_id: EnvId, key: String, value: Ast) {
-    if !self.envs.contains_key(&env_id) {
-      panic!("Tried to put into non existent environment!");
-    }
-    self.envs.entry(env_id).and_modify(|env| {
-      env.map.insert(key, value);
-    });
-  }
-
-  fn get(&mut self, active_env: EnvId, key: &String) -> Option<Ast> {
-    let mut active_env = active_env;
-    //loop through all parents
-    while let None = self.envs[&active_env].map.get(key) {
-      match self.envs[&active_env].parent_id {
-        None => return None,
-        Some(id) => active_env = id,
-      }
-    }
-    //TODO: extremely unnice. Work on overhaul of environment system!
-    let val = self.envs.get_mut(&active_env).expect("checked").map.remove(key).expect("checked");
-    let res = Some(val.clone(self));
-    self.put_local(active_env, key.clone(), val);
-    res
-  }
-}
 
 type OwnlispResult = Result<Ast, failure::Error>;
 type LFunction = fn(VecDeque<Ast>, &mut Environments, active_env: EnvId) -> OwnlispResult;
@@ -181,344 +112,6 @@ const _GRAMMAR: &str = include_str!("ownlisp.pest");
 #[grammar = "ownlisp.pest"]
 struct OwnlispParser;
 
-enum Ast {
-  Number(i64),
-  Bool(bool),
-  Str(String),
-  Builtin(LFunction),
-  Function(EnvId, VecDeque<String>, VecDeque<Ast>),
-  Symbol(String),
-  SExpression(VecDeque<Ast>),
-  QExpression(VecDeque<Ast>),
-  EmptyProgram,
-}
-
-impl Ast {
-  fn clone(&self, env: &mut Environments) -> Ast {
-    match self {
-      Ast::Number(num) => Ast::Number(*num),
-      Ast::Bool(b) => Ast::Bool(*b),
-      Ast::Str(s) => Ast::Str(s.clone()),
-      Ast::Builtin(f) => Ast::Builtin(f.clone()),
-      //Special case for cloning functions. We always open a new environment and
-      //set it's parent to the same parent as the old one
-      Ast::Function(id, form, body) => {
-        let new_id = env.create_env();
-        env.set_parent(new_id, *id);
-        let new_body = body.into_iter().map(|ast| ast.clone(env)).collect();
-        Ast::Function(new_id, form.clone(), new_body)
-      }
-      Ast::Symbol(s) => Ast::Symbol(s.clone()),
-      Ast::SExpression(exp) => {
-        let new_exp = exp.into_iter().map(|ast| ast.clone(env)).collect();
-        Ast::SExpression(new_exp)
-      }
-      Ast::QExpression(exp) => {
-        let new_exp = exp.into_iter().map(|ast| ast.clone(env)).collect();
-        Ast::QExpression(new_exp)
-      }
-      Ast::EmptyProgram => Ast::EmptyProgram,
-    }
-  }
-}
-
-impl std::cmp::PartialEq for Ast {
-  fn eq(&self, other: &Ast) -> bool {
-    if let Ast::Number(mine) = self {
-      if let Ast::Number(other) = other {
-        mine == other
-      } else {
-        false
-      }
-    } else if let Ast::Bool(mine) = self {
-      if let Ast::Bool(other) = other {
-        mine == other
-      } else {
-        false
-      }
-    } else if let Ast::Builtin(mine) = self {
-      if let Ast::Builtin(other) = other {
-        std::ptr::eq(&mine, &other)
-      } else {
-        false
-      }
-    } else if let Ast::Function(_, mine2, mine3) = self {
-      if let Ast::Function(_, other2, other3) = other {
-        mine2 == other2 && mine3 == other3
-      } else {
-        false
-      }
-    } else if let Ast::Symbol(mine) = self {
-      if let Ast::Symbol(other) = other {
-        mine == other
-      } else {
-        false
-      }
-    } else if let Ast::SExpression(mine) = self {
-      if let Ast::SExpression(other) = other {
-        if mine.len() != other.len() {
-          false
-        } else {
-          for (m, o) in mine.iter().zip(other.iter()) {
-            if m != o {
-              return false;
-            }
-          }
-          true
-        }
-      } else {
-        false
-      }
-    } else if let Ast::Str(mine) = self {
-      if let Ast::Str(other) = other {
-        mine == other
-      } else {
-        false
-      }
-    } else if let Ast::QExpression(mine) = self {
-      if let Ast::QExpression(other) = other {
-        if mine.len() != other.len() {
-          false
-        } else {
-          for (m, o) in mine.iter().zip(other.iter()) {
-            if m != o {
-              return false;
-            }
-          }
-          true
-        }
-      } else {
-        false
-      }
-    } else {
-      true
-    }
-  }
-}
-
-impl std::fmt::Debug for Ast {
-  fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-    match *self {
-      Ast::Builtin(_) => write!(f, "Builtin(<builtin>)"),
-      _ => write!(f, "{:?}", self),
-    }
-  }
-}
-
-impl std::fmt::Display for Ast {
-  fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-    match self {
-      Ast::Number(num) => write!(f, "{}", num),
-      Ast::Symbol(sym) => write!(f, "{}", sym),
-      Ast::SExpression(values) => {
-        let mut res = write!(f, "(");
-        let mut iter = values.into_iter().peekable();
-        while let Some(item) = iter.next() {
-          if iter.peek().is_some() {
-            res = res.and(write!(f, "{} ", item));
-          } else {
-            res = res.and(write!(f, "{}", item));
-          }
-        }
-        res = res.and(write!(f, ")"));
-        res
-      }
-      Ast::Str(s) => write!(f, "{}", s),
-      Ast::Bool(b) => write!(f, "{}", b),
-      Ast::Builtin(_) => write!(f, "<builtin>"),
-      Ast::Function(_, formals, body) => {
-        let mut res = write!(f, "(\\ {{");
-        let mut formals = formals.into_iter().peekable();
-        while let Some(formal) = formals.next() {
-          if formals.peek().is_some() {
-            res = res.and(write!(f, "{} ", formal));
-          } else {
-            res = res.and(write!(f, "{}", formal));
-          }
-        }
-        res = res.and(write!(f, "}} {{"));
-        let mut body = body.into_iter().peekable();
-        while let Some(bod) = body.next() {
-          if body.peek().is_some() {
-            res = res.and(write!(f, "{} ", bod));
-          } else {
-            res = res.and(write!(f, "{}", bod));
-          }
-        }
-        res = res.and(write!(f, "}})"));
-        res
-      }
-      Ast::QExpression(values) => {
-        let mut res = write!(f, "{{");
-        let mut iter = values.into_iter().peekable();
-        while let Some(item) = iter.next() {
-          if iter.peek().is_some() {
-            res = res.and(write!(f, "{} ", item));
-          } else {
-            res = res.and(write!(f, "{}", item));
-          }
-        }
-        res = res.and(write!(f, "}}"));
-        res
-      }
-      Ast::EmptyProgram => write!(f, "()"),
-    }
-  }
-}
-
-fn apply_op(op: &str, x: i64, y: i64) -> Result<i64, failure::Error> {
-  match op {
-    OP_MINUS => Ok(x - y),
-    OP_PLUS => Ok(x + y),
-    OP_MULT => Ok(x * y),
-    OP_DIV => {
-      if y == 0 {
-        bail!("Attempted division by 0.")
-      } else {
-        Ok(x / y)
-      }
-    }
-    OP_REM => Ok(x % y),
-    //TODO: Check for if the conversation here is safe.
-    OP_EXP => Ok(x.pow(y as u32)),
-    OP_MIN => Ok(std::cmp::min(x, y)),
-    OP_MAX => Ok(std::cmp::max(x, y)),
-    _ => panic!("We tried to apply a qexpression operator on a number"),
-  }
-}
-
-fn build_custom_ast(pair: pest::iterators::Pair<Rule>) -> Ast {
-  fn build_ast(pair: pest::iterators::Pair<Rule>) -> Ast {
-    match pair.as_rule() {
-      Rule::number => Ast::Number(
-        pair
-          .as_str()
-          .parse()
-          .expect("We expect to only get valid numbers here"),
-      ),
-
-      Rule::string => Ast::Str(pair.as_str().to_owned()),
-
-      Rule::symbol => Ast::Symbol(pair.as_str().to_owned()),
-
-      Rule::sexpression => {
-        let res = pair.into_inner().map(build_ast).collect();
-        Ast::SExpression(res)
-      }
-
-      Rule::qexpression => {
-        let res = pair.into_inner().map(build_ast).collect();
-        Ast::QExpression(res)
-      }
-
-      Rule::expression => build_ast(
-        pair
-          .into_inner()
-          .next()
-          .expect("Expressions always consist of one item"),
-      ),
-
-      Rule::program => {
-        let mut pairs = pair.into_inner().peekable();
-        match pairs.peek() {
-          Some(_) => Ast::SExpression(pairs.map(build_ast).collect()),
-          None => Ast::EmptyProgram,
-        }
-      }
-
-      _ => panic!("Unknown parsing rule encountered"),
-    }
-  }
-  build_ast(pair)
-}
-
-macro_rules! create_evaluate_math {
-  ($name:ident, $op:expr) => {
-    fn $name(args: VecDeque<Ast>, _env: &mut Environments, _active_env: EnvId) -> OwnlispResult {
-      evaluate_math_builtin($op, args)
-    }
-  };
-}
-
-create_evaluate_math!(evaluate_mult, OP_MULT);
-create_evaluate_math!(evaluate_div, OP_DIV);
-create_evaluate_math!(evaluate_plus, OP_PLUS);
-create_evaluate_math!(evaluate_minus, OP_MINUS);
-create_evaluate_math!(evaluate_rem, OP_REM);
-create_evaluate_math!(evaluate_exp, OP_EXP);
-create_evaluate_math!(evaluate_min, OP_MIN);
-create_evaluate_math!(evaluate_max, OP_MAX);
-
-fn evaluate_math_builtin(op: &str, sexp: VecDeque<Ast>) -> OwnlispResult {
-  //fast bailout if we don't only have numbers as operands
-  let sexp: Vec<_> = sexp
-    .into_iter()
-    .map(|operand| match operand {
-      Ast::Number(x) => Ok(x),
-      _ => Err(format_err!("Math functions only work with numbers!")),
-    })
-    .collect::<Result<_, _>>()?;
-
-  let mut operands = sexp.into_iter().peekable();
-  let first_operand = operands.next();
-  match first_operand {
-    Some(operand) => {
-      let mut total = operand;
-      //we only had one operand so check if it's an unary operator
-      if operands.peek().is_none() {
-        match op {
-          OP_MINUS => Ok(Ast::Number(-total)),
-          OP_MIN | OP_MAX => Ok(Ast::Number(total)),
-          _ => bail!("The function {} is not an unary function.", op),
-        }
-      //We have many operands
-      } else {
-        for val in operands {
-          total = apply_op(op, total, val)?;
-        }
-        Ok(Ast::Number(total))
-      }
-    }
-    None => bail!("Functions need arguments to work on."),
-  }
-}
-
-macro_rules! create_evalate_order {
-  ($name:ident, $op:expr) => {
-    fn $name(args: VecDeque<Ast>, _env: &mut Environments, _active_env: EnvId) -> OwnlispResult {
-      evaluate_order_builtin($op, args)
-    }
-  };
-}
-
-create_evalate_order!(evaluate_gt, OP_GT);
-create_evalate_order!(evaluate_lt, OP_LT);
-create_evalate_order!(evaluate_ge, OP_GE);
-create_evalate_order!(evaluate_le, OP_LE);
-
-fn evaluate_order_builtin(op: &str, args: VecDeque<Ast>) -> OwnlispResult {
-  if args.len() != 2 {
-    bail!("The comparison operators are only binary operators!")
-  }
-  let numbers = args
-    .into_iter()
-    .map(|arg| match arg {
-      Ast::Number(num) => Ok(num),
-      _ => Err(format_err!(
-        "The comparison operators only work on numbers!"
-      )),
-    })
-    .collect::<Result<Vec<_>, _>>()?;
-
-  match op {
-    OP_EQ => Ok(Ast::Bool(numbers[0] == numbers[1])),
-    OP_LT => Ok(Ast::Bool(numbers[0] < numbers[1])),
-    OP_GT => Ok(Ast::Bool(numbers[0] > numbers[1])),
-    OP_LE => Ok(Ast::Bool(numbers[0] <= numbers[1])),
-    OP_GE => Ok(Ast::Bool(numbers[0] >= numbers[1])),
-    _ => panic!("Unknown comparison operation!"),
-  }
-}
 
 fn evaluate_ne(args: VecDeque<Ast>, _env: &mut Environments, _active_env: EnvId) -> OwnlispResult {
   let eq = evaluate_eq(args, _env, _active_env);
@@ -823,7 +416,7 @@ fn load_ownlisp(args: VecDeque<Ast>, env: &mut Environments, _active_env: EnvId)
       match parsed {
         Err(e) => bail!("Couldn't parse file: {}", e),
         Ok(mut pairs) => {
-          let ast = build_custom_ast(pairs.next().unwrap());
+          let ast = ast::build(pairs.next().unwrap());
           //try to evaluate every expression seperately
           if let Ast::SExpression(sexp) = ast {
             for prog in sexp {
@@ -883,60 +476,12 @@ fn evaluate(program: Ast, environment: &mut Environments, active_env: EnvId) -> 
   }
 }
 
-fn add_builtins(env: &mut Environments) {
-  //List functions
-  env.put_global(OP_LIST.to_owned(), Ast::Builtin(evaluate_list));
-  env.put_global(OP_EVAL.to_owned(), Ast::Builtin(evaluate_eval));
-  env.put_global(OP_JOIN.to_owned(), Ast::Builtin(evaluate_join));
-  env.put_global(OP_HEAD.to_owned(), Ast::Builtin(evaluate_head));
-  env.put_global(OP_TAIL.to_owned(), Ast::Builtin(evaluate_tail));
-
-  //Mathematical Functions
-  env.put_global(OP_PLUS.to_owned(), Ast::Builtin(evaluate_plus));
-  env.put_global(OP_MINUS.to_owned(), Ast::Builtin(evaluate_minus));
-  env.put_global(OP_MULT.to_owned(), Ast::Builtin(evaluate_mult));
-  env.put_global(OP_DIV.to_owned(), Ast::Builtin(evaluate_div));
-  env.put_global(OP_EXP.to_owned(), Ast::Builtin(evaluate_exp));
-  env.put_global(OP_REM.to_owned(), Ast::Builtin(evaluate_rem));
-  env.put_global(OP_MIN.to_owned(), Ast::Builtin(evaluate_min));
-  env.put_global(OP_MAX.to_owned(), Ast::Builtin(evaluate_max));
-
-  //Order functions for numbers
-  env.put_global(OP_LE.to_owned(), Ast::Builtin(evaluate_le));
-  env.put_global(OP_GE.to_owned(), Ast::Builtin(evaluate_ge));
-  env.put_global(OP_LT.to_owned(), Ast::Builtin(evaluate_lt));
-  env.put_global(OP_GT.to_owned(), Ast::Builtin(evaluate_gt));
-
-  //Equality
-  env.put_global(OP_EQ.to_owned(), Ast::Builtin(evaluate_eq));
-  env.put_global(OP_NE.to_owned(), Ast::Builtin(evaluate_ne));
-
-  //If
-  env.put_global(OP_IF.to_owned(), Ast::Builtin(evaluate_if));
-
-  //Constants
-  env.put_global(TRUE.to_owned(), Ast::Bool(true));
-  env.put_global(FALSE.to_owned(), Ast::Bool(false));
-
-  //Def function
-  env.put_global(OP_DEF.to_owned(), Ast::Builtin(evaluate_def));
-  env.put_global(OP_PUT.to_owned(), Ast::Builtin(evaluate_put));
-
-  //Func function
-  env.put_global(OP_LAMBDA.to_owned(), Ast::Builtin(evaluate_lambda));
-
-  //String functions
-  env.put_global(LOAD.to_owned(), Ast::Builtin(load_ownlisp));
-  env.put_global(PRINT.to_owned(), Ast::Builtin(print_string));
-}
 
 fn main() {
   println!("Ownlisp version 0.0.7");
   println!("Press Ctrl+c to Exit\n");
 
   let mut environment = Environments::new();
-  add_builtins(&mut environment);
-
   while let Some(line) = editline::readline("Ownlisp>") {
     let line = line.trim();
     editline::add_history(&line);
@@ -945,7 +490,7 @@ fn main() {
     }
     let parsed = OwnlispParser::parse(Rule::program, line);
     if let Ok(mut pairs) = parsed {
-      let program = build_custom_ast(pairs.next().unwrap());
+      let program = ast::build(pairs.next().unwrap());
       let evaluated = evaluate(program, &mut environment, 0);
       match evaluated {
         Ok(result) => println!("{}", result),
