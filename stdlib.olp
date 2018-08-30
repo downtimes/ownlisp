@@ -133,7 +133,7 @@
 ;conditional functions
 (fun {select:cases} {
   if (= cases nil)
-    {}
+    {error "No case found"}
     {if (fst (fst cases)) 
       {snd (fst cases)} 
       {unpack select (tail cases)}
@@ -142,7 +142,7 @@
 
 (fun {case x:cases} {
   if (= cases nil)
-    {}
+    {error "No cases found"}
     {if (= x (fst (fst cases)))
       {snd (fst cases)}
       {unpack case (join (list x) (tail cases))}

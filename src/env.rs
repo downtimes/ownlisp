@@ -1,10 +1,8 @@
 use super::{
-    evaluate_def, evaluate_eq, evaluate_eval, evaluate_head, evaluate_if, evaluate_join,
-    evaluate_lambda, evaluate_list, evaluate_ne, evaluate_put, evaluate_tail, FALSE, LOAD, OP_DEF,
-    OP_EQ, OP_EVAL, OP_HEAD, OP_IF, OP_JOIN, OP_LAMBDA, OP_LIST, OP_NE, OP_PUT, OP_TAIL, PRINT,
-    TRUE, load_ownlisp, print_string
+    evaluate_def, evaluate_eq, evaluate_eval, evaluate_if, evaluate_lambda, evaluate_ne,
+    evaluate_put, FALSE, OP_DEF, OP_EQ, OP_EVAL, OP_IF, OP_LAMBDA, OP_NE, OP_PUT, TRUE,
 };
-use super::{math, Ast};
+use super::{lists, math, Ast, strings};
 use std::collections::HashMap;
 
 pub(crate) type EnvId = usize;
@@ -102,11 +100,13 @@ impl Environments {
 
     fn add_builtins(&mut self) {
         //List functions
-        self.put_global(OP_LIST.to_owned(), Ast::Builtin(evaluate_list));
+        self.put_global(lists::OP_LIST.to_owned(), Ast::Builtin(lists::list));
+        self.put_global(lists::OP_JOIN.to_owned(), Ast::Builtin(lists::join));
+        self.put_global(lists::OP_HEAD.to_owned(), Ast::Builtin(lists::head));
+        self.put_global(lists::OP_TAIL.to_owned(), Ast::Builtin(lists::tail));
+
+        //evaluate function
         self.put_global(OP_EVAL.to_owned(), Ast::Builtin(evaluate_eval));
-        self.put_global(OP_JOIN.to_owned(), Ast::Builtin(evaluate_join));
-        self.put_global(OP_HEAD.to_owned(), Ast::Builtin(evaluate_head));
-        self.put_global(OP_TAIL.to_owned(), Ast::Builtin(evaluate_tail));
 
         //Mathematical Functions
         self.put_global(math::OP_PLUS.to_owned(), Ast::Builtin(math::plus));
@@ -143,7 +143,8 @@ impl Environments {
         self.put_global(OP_LAMBDA.to_owned(), Ast::Builtin(evaluate_lambda));
 
         //String functions
-        self.put_global(LOAD.to_owned(), Ast::Builtin(load_ownlisp));
-        self.put_global(PRINT.to_owned(), Ast::Builtin(print_string));
+        self.put_global(strings::LOAD.to_owned(), Ast::Builtin(strings::load_ownlisp));
+        self.put_global(strings::PRINT.to_owned(), Ast::Builtin(strings::print));
+        self.put_global(strings::ERROR.to_owned(), Ast::Builtin(strings::error));
     }
 }

@@ -1,8 +1,7 @@
 //TODO: Errors at the moment are pretty useless. We definitely need to improve
 //our error reporting so people can actually fix their broken programs
-//TODO: implement error printing for lisp users
-//TODO: refactoring. Verschidene teile in vershieden Dateien etc
 //TODO: write vscode plugin for language support
+//TODO: treat Strings as Lists of characters to get list functionality on them
 //TODO: To make the language more useful: add GC, add doubles, add user defined types, add os
 //interaction layer, add tail call optimization, type inferance, lexical scoping
 #[cfg(not(windows))]
@@ -16,22 +15,18 @@ extern crate failure;
 #[macro_use]
 extern crate lazy_static;
 
-mod math;
-mod env;
 mod ast;
+mod env;
+mod lists;
+mod math;
+mod strings;
 
-use pest::Parser;
-use env::{Environments, EnvId};
-use std::collections::VecDeque;
-use std::fs::File;
-use std::io::prelude::*;
 use ast::Ast;
+use env::{EnvId, Environments};
+use pest::Parser;
+use std::collections::VecDeque;
 
-const OP_LIST: &str = "list";
-const OP_JOIN: &str = "join";
 const OP_EVAL: &str = "eval";
-const OP_HEAD: &str = "head";
-const OP_TAIL: &str = "tail";
 const OP_DEF: &str = "def";
 const OP_EQ: &str = "=";
 const OP_NE: &str = "!=";
@@ -39,8 +34,6 @@ const OP_IF: &str = "if";
 const OP_PUT: &str = "let";
 const TRUE: &str = "true";
 const FALSE: &str = "false";
-const LOAD: &str = "load";
-const PRINT: &str = "print";
 const OP_LAMBDA: &str = "\\";
 
 lazy_static! {
@@ -58,8 +51,13 @@ lazy_static! {
       math::OP_LE,
       math::OP_LT,
       math::OP_GT,
-      OP_LIST,
-      OP_JOIN,
+      lists::OP_LIST,
+      lists::OP_JOIN,
+      lists::OP_HEAD,
+      lists::OP_TAIL,
+      strings::LOAD,
+      strings::PRINT,
+      strings::ERROR,
       OP_EVAL,
       OP_DEF,
       OP_LAMBDA,
@@ -68,15 +66,10 @@ lazy_static! {
       FALSE,
       OP_IF,
       OP_NE,
-      LOAD,
-      OP_HEAD,
-      OP_TAIL,
       OP_PUT,
-      PRINT,
     ]
   };
 }
-
 
 type OwnlispResult = Result<Ast, failure::Error>;
 type LFunction = fn(VecDeque<Ast>, &mut Environments, active_env: EnvId) -> OwnlispResult;
@@ -112,7 +105,6 @@ const _GRAMMAR: &str = include_str!("ownlisp.pest");
 #[grammar = "ownlisp.pest"]
 struct OwnlispParser;
 
-
 fn evaluate_ne(args: VecDeque<Ast>, _env: &mut Environments, _active_env: EnvId) -> OwnlispResult {
   let eq = evaluate_eq(args, _env, _active_env);
   match eq {
@@ -147,86 +139,6 @@ fn evaluate_eval(args: VecDeque<Ast>, env: &mut Environments, active_env: EnvId)
       bail!("Eval only works with QExpression as argument.")
     }
   }
-}
-
-fn evaluate_join(
-  args: VecDeque<Ast>,
-  _env: &mut Environments,
-  _active_env: EnvId,
-) -> OwnlispResult {
-  let mut qlists: VecDeque<_> = args
-    .into_iter()
-    .map(|expr| match expr {
-      Ast::QExpression(exp) => Ok(exp),
-      _ => Err(format_err!("Join can only work on QExpressions!")),
-    })
-    .collect::<Result<_, _>>()?;
-
-  match qlists.pop_front() {
-    //Flatten all the QExpressions into the first one
-    Some(mut res) => {
-      for mut list in qlists {
-        res.append(&mut list);
-      }
-      Ok(Ast::QExpression(res))
-    }
-    None => bail!("Join needs an argument to work on."),
-  }
-}
-
-fn evaluate_head(
-  args: VecDeque<Ast>,
-  _env: &mut Environments,
-  _active_env: EnvId,
-) -> OwnlispResult {
-  if args.len() != 1 {
-    bail!("head can only work with a single QExpression!")
-  }
-  let mut args = args;
-  if let Ast::QExpression(mut list) = args.pop_front().expect("checked") {
-    let mut res = VecDeque::new();
-    match list.pop_front() {
-      Some(item) => res.push_back(item),
-      None => {}
-    }
-    Ok(Ast::QExpression(res))
-  } else {
-    bail!("head only works on QExpressions!")
-  }
-}
-
-fn evaluate_tail(
-  args: VecDeque<Ast>,
-  _env: &mut Environments,
-  _active_env: EnvId,
-) -> OwnlispResult {
-  if args.len() != 1 {
-    bail!("tail can only work with a single QExpressio!")
-  }
-  let mut args = args;
-  if let Ast::QExpression(mut list) = args.pop_front().expect("checked") {
-    let _dontcare = list.pop_front();
-    Ok(Ast::QExpression(list))
-  } else {
-    bail!("tail can only work on QExpressions!")
-  }
-}
-
-fn evaluate_list(
-  args: VecDeque<Ast>,
-  _env: &mut Environments,
-  _active_env: EnvId,
-) -> OwnlispResult {
-  //flatten empty stuff away
-  let args = args
-    .into_iter()
-    .filter(|arg| match arg {
-      Ast::QExpression(qexpr) => !qexpr.is_empty(),
-      Ast::SExpression(sexpr) => !sexpr.is_empty(),
-      _ => true,
-    })
-    .collect();
-  Ok(Ast::QExpression(args))
 }
 
 fn evaluate_lambda(
@@ -334,7 +246,7 @@ fn evaluate_fun(
     //Special case for variadic parameters
     if formal == ":" {
       let rest_formal = get_variadic_part(&mut formals)?;
-      let args = evaluate_list(arguments, env, parent_env)?;
+      let args = lists::list(arguments, env, parent_env)?;
       env.put_local(func_env, rest_formal, args);
       break;
     //normal assignment
@@ -384,55 +296,6 @@ fn evaluate_if(args: VecDeque<Ast>, env: &mut Environments, active_env: EnvId) -
   }
 }
 
-fn print_string(args: VecDeque<Ast>, _env: &mut Environments, _act_env: EnvId) -> OwnlispResult {
-  let mut args = args;
-  match args.pop_front() {
-    Some(Ast::Str(s)) => {
-      if !args.is_empty() {
-        bail!("Too many arguments for the print call!")
-      }
-      println!("{}", s);
-      Ok(Ast::EmptyProgram)
-    }
-    _ => bail!("Wrong argument type for the print call!"),
-  }
-}
-
-fn load_ownlisp(args: VecDeque<Ast>, env: &mut Environments, _active_env: EnvId) -> OwnlispResult {
-  let mut args = args;
-  match args.pop_front() {
-    Some(Ast::Str(s)) => {
-      if !args.is_empty() {
-        bail!("load only works with one string argument.")
-      }
-      let file_name = s.trim_matches('"');
-      let mut f = match File::open(file_name) {
-        Ok(f) => f,
-        Err(e) => bail!("Could not open file {}! ({})", s, e),
-      };
-      let mut contents = String::new();
-      f.read_to_string(&mut contents)?;
-      let parsed = OwnlispParser::parse(Rule::program, &contents);
-      match parsed {
-        Err(e) => bail!("Couldn't parse file: {}", e),
-        Ok(mut pairs) => {
-          let ast = ast::build(pairs.next().unwrap());
-          //try to evaluate every expression seperately
-          if let Ast::SExpression(sexp) = ast {
-            for prog in sexp {
-              match evaluate(prog, env, 0) {
-                Ok(_) => continue,
-                Err(e) => return Err(e),
-              }
-            }
-          }
-          Ok(Ast::EmptyProgram)
-        }
-      }
-    }
-    _ => bail!("load only works with strings as argument."),
-  }
-}
 
 fn evaluate_sexpression(ast: Ast, env: &mut Environments, active_env: EnvId) -> OwnlispResult {
   let sexp = match ast {
@@ -475,7 +338,6 @@ fn evaluate(program: Ast, environment: &mut Environments, active_env: EnvId) -> 
     _ => Ok(program),
   }
 }
-
 
 fn main() {
   println!("Ownlisp version 0.0.7");
