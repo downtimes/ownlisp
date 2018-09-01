@@ -1,6 +1,9 @@
 use failure;
 use std::cmp;
-use super::{VecDeque, Environments, OwnlispResult, EnvId};
+use std::rc::Rc;
+use std::cell::RefCell;
+use env::Env;
+use super::{VecDeque, OwnlispResult};
 use ast::Ast;
 
 pub const OP_MIN: &str = "min";
@@ -11,10 +14,8 @@ pub const OP_EXP: &str = "^";
 pub const OP_MULT: &str = "*";
 pub const OP_DIV: &str = "/";
 pub const OP_REM: &str = "%";
-pub const OP_GE: &str = ">=";
-pub const OP_LE: &str = "<=";
-pub const OP_LT: &str = "<";
-pub const OP_GT: &str = ">";
+
+//TODO: all these functions don't care about the environment. That smells.
 
 fn apply_op(op: &str, x: i64, y: i64) -> Result<i64, failure::Error> {
   match op {
@@ -39,7 +40,7 @@ fn apply_op(op: &str, x: i64, y: i64) -> Result<i64, failure::Error> {
 
 macro_rules! create_evaluate_math {
   ($name:ident, $op:expr) => {
-    pub(crate) fn $name(args: VecDeque<Ast>, _env: &mut Environments, _active_env: EnvId) -> OwnlispResult {
+    pub(crate) fn $name(args: VecDeque<Ast>, _env: Rc<RefCell<Env>>) -> OwnlispResult {
       evaluate($op, args)
     }
   };
@@ -85,41 +86,5 @@ fn evaluate(op: &str, sexp: VecDeque<Ast>) -> OwnlispResult {
       }
     }
     None => bail!("Functions need arguments to work on."),
-  }
-}
-
-macro_rules! create_evalate_order {
-  ($name:ident, $op:expr) => {
-    pub(crate) fn $name(args: VecDeque<Ast>, _env: &mut Environments, _active_env: EnvId) -> OwnlispResult {
-      evaluate_order($op, args)
-    }
-  };
-}
-
-create_evalate_order!(gt, OP_GT);
-create_evalate_order!(lt, OP_LT);
-create_evalate_order!(ge, OP_GE);
-create_evalate_order!(le, OP_LE);
-
-fn evaluate_order(op: &str, args: VecDeque<Ast>) -> OwnlispResult {
-  if args.len() != 2 {
-    bail!("The comparison operators are only binary operators!")
-  }
-  let numbers = args
-    .into_iter()
-    .map(|arg| match arg {
-      Ast::Number(num) => Ok(num),
-      _ => Err(format_err!(
-        "The comparison operators only work on numbers!"
-      )),
-    })
-    .collect::<Result<Vec<_>, _>>()?;
-
-  match op {
-    OP_LT => Ok(Ast::Bool(numbers[0] < numbers[1])),
-    OP_GT => Ok(Ast::Bool(numbers[0] > numbers[1])),
-    OP_LE => Ok(Ast::Bool(numbers[0] <= numbers[1])),
-    OP_GE => Ok(Ast::Bool(numbers[0] >= numbers[1])),
-    _ => panic!("Unknown comparison operation!"),
   }
 }

@@ -1,16 +1,24 @@
+use super::{evaluate, Ast, OwnlispResult};
+use parser;
+use env::Env;
 use std::collections::VecDeque;
+use std::rc::Rc;
+use std::cell::RefCell;
 use std::fs::File;
 use std::io::prelude::*;
-use super::{ast, Ast, EnvId, Environments, OwnlispResult, Rule, OwnlispParser, evaluate};
-use pest::Parser;
 
 pub const LOAD: &str = "load";
 pub const PRINT: &str = "print";
 pub const ERROR: &str = "error";
 
 //TODO: for the print and error call support some kind of variadic argument list with string interpolation
+//TODO: for print support some kind of string interpolation
+//TODO: all these functions don't care about the environment stuff. That smells.
 
-pub(crate) fn print(args: VecDeque<Ast>, _env: &mut Environments, _act_env: EnvId) -> OwnlispResult {
+pub(crate) fn print(
+  args: VecDeque<Ast>,
+  _env: Rc<RefCell<Env>>,
+) -> OwnlispResult {
   let mut args = args;
   match args.pop_front() {
     Some(Ast::Str(s)) => {
@@ -24,7 +32,10 @@ pub(crate) fn print(args: VecDeque<Ast>, _env: &mut Environments, _act_env: EnvI
   }
 }
 
-pub(crate) fn error(args: VecDeque<Ast>, _env: &mut Environments, _act_env: EnvId) -> OwnlispResult {
+pub(crate) fn error(
+  args: VecDeque<Ast>,
+  _env: Rc<RefCell<Env>>,
+) -> OwnlispResult {
   let mut args = args;
   match args.pop_front() {
     Some(Ast::Str(s)) => {
@@ -33,12 +44,14 @@ pub(crate) fn error(args: VecDeque<Ast>, _env: &mut Environments, _act_env: EnvI
       }
       bail!("Error: {}", s);
     }
-    _ => bail!("Wrong or no argument type for the error call")
+    _ => bail!("Wrong or no argument type for the error call"),
   }
-
 }
 
-pub(crate) fn load_ownlisp(args: VecDeque<Ast>, env: &mut Environments, _active_env: EnvId) -> OwnlispResult {
+pub(crate) fn load_ownlisp(
+  args: VecDeque<Ast>,
+  env: Rc<RefCell<Env>>,
+) -> OwnlispResult {
   let mut args = args;
   match args.pop_front() {
     Some(Ast::Str(s)) => {
@@ -52,15 +65,12 @@ pub(crate) fn load_ownlisp(args: VecDeque<Ast>, env: &mut Environments, _active_
       };
       let mut contents = String::new();
       f.read_to_string(&mut contents)?;
-      let parsed = OwnlispParser::parse(Rule::program, &contents);
-      match parsed {
+      match parser::parse_to_ast(&contents) {
         Err(e) => bail!("Couldn't parse file: {}", e),
-        Ok(mut pairs) => {
-          let ast = ast::build(pairs.next().unwrap());
-          //try to evaluate every expression seperately
+        Ok(mut ast) => {
           if let Ast::SExpression(sexp) = ast {
-            for prog in sexp {
-              match evaluate(prog, env, 0) {
+            for expr in sexp.into_iter() {
+              match evaluate(expr, Rc::clone(&env)) {
                 Ok(_) => continue,
                 Err(e) => return Err(e),
               }

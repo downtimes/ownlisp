@@ -1,14 +1,17 @@
-use super::{VecDeque, Ast, EnvId, Environments, OwnlispResult};
+use std::rc::Rc;
+use std::cell::RefCell;
+use env::Env;
+use super::{VecDeque, Ast, OwnlispResult};
 
 pub const OP_LIST: &str = "list";
 pub const OP_JOIN: &str = "join";
 pub const OP_HEAD: &str = "head";
 pub const OP_TAIL: &str = "tail";
 
+//TODO: all these functions don't care about the last two arguments. That smells!
 pub(crate) fn join(
   args: VecDeque<Ast>,
-  _env: &mut Environments,
-  _active_env: EnvId,
+  _env: Rc<RefCell<Env>>,
 ) -> OwnlispResult {
   let mut qlists: VecDeque<_> = args
     .into_iter()
@@ -32,8 +35,7 @@ pub(crate) fn join(
 
 pub(crate) fn list(
   args: VecDeque<Ast>,
-  _env: &mut Environments,
-  _active_env: EnvId,
+  _env: Rc<RefCell<Env>>,
 ) -> OwnlispResult {
   //flatten empty stuff away
   let args = args
@@ -49,8 +51,7 @@ pub(crate) fn list(
 
 pub(crate) fn head(
   args: VecDeque<Ast>,
-  _env: &mut Environments,
-  _active_env: EnvId,
+  _env: Rc<RefCell<Env>>,
 ) -> OwnlispResult {
   if args.len() != 1 {
     bail!("head can only work with a single QExpression!")
@@ -70,8 +71,7 @@ pub(crate) fn head(
 
 pub(crate) fn tail(
   args: VecDeque<Ast>,
-  _env: &mut Environments,
-  _active_env: EnvId,
+  _env: Rc<RefCell<Env>>,
 ) -> OwnlispResult {
   if args.len() != 1 {
     bail!("tail can only work with a single QExpressio!")

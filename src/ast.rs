@@ -1,13 +1,16 @@
-use super::{LFunction, EnvId, VecDeque, Environments, Rule};
+use super::{LFunction, VecDeque};
 use std::{cmp, ptr, fmt};
-use pest;
+use std::rc::Rc;
+use std::cell::RefCell;
+use env::{Env};
 
 pub(crate) enum Ast {
   Number(i64),
   Bool(bool),
   Str(String),
   Builtin(LFunction),
-  Function(EnvId, VecDeque<String>, VecDeque<Ast>),
+  //TODO: implement drop on ast so that Function can cleanup their EnvId's in the map!
+  Function(Rc<RefCell<Env>>, VecDeque<String>, VecDeque<Ast>),
   Symbol(String),
   SExpression(VecDeque<Ast>),
   QExpression(VecDeque<Ast>),
@@ -15,8 +18,8 @@ pub(crate) enum Ast {
 }
 
 
-impl Ast {
-  pub(crate) fn clone(&self, env: &mut Environments) -> Ast {
+impl Clone for Ast {
+  fn clone(&self) -> Ast {
     match self {
       Ast::Number(num) => Ast::Number(*num),
       Ast::Bool(b) => Ast::Bool(*b),
@@ -24,19 +27,18 @@ impl Ast {
       Ast::Builtin(f) => Ast::Builtin(f.clone()),
       //Special case for cloning functions. We always open a new environment and
       //set it's parent to the same parent as the old one
-      Ast::Function(id, form, body) => {
-        let new_id = env.create_env();
-        env.set_parent(new_id, *id);
-        let new_body = body.into_iter().map(|ast| ast.clone(env)).collect();
-        Ast::Function(new_id, form.clone(), new_body)
+      Ast::Function(env, form, body) => {
+        let new_env = Rc::new(RefCell::new(Env::new(Some(Rc::clone(env)))));
+        let new_body = body.into_iter().map(|ast| ast.clone()).collect();
+        Ast::Function(new_env, form.clone(), new_body)
       }
       Ast::Symbol(s) => Ast::Symbol(s.clone()),
       Ast::SExpression(exp) => {
-        let new_exp = exp.into_iter().map(|ast| ast.clone(env)).collect();
+        let new_exp = exp.into_iter().map(|ast| ast.clone()).collect();
         Ast::SExpression(new_exp)
       }
       Ast::QExpression(exp) => {
-        let new_exp = exp.into_iter().map(|ast| ast.clone(env)).collect();
+        let new_exp = exp.into_iter().map(|ast| ast.clone()).collect();
         Ast::QExpression(new_exp)
       }
       Ast::EmptyProgram => Ast::EmptyProgram,
@@ -44,6 +46,7 @@ impl Ast {
   }
 }
 
+//TODO: cleanup!
 impl cmp::PartialEq for Ast {
   fn eq(&self, other: &Ast) -> bool {
     if let Ast::Number(mine) = self {
@@ -118,15 +121,6 @@ impl cmp::PartialEq for Ast {
   }
 }
 
-impl fmt::Debug for Ast {
-  fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-    match *self {
-      Ast::Builtin(_) => write!(f, "Builtin(<builtin>)"),
-      _ => write!(f, "{:?}", self),
-    }
-  }
-}
-
 impl fmt::Display for Ast {
   fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
     match self {
@@ -186,49 +180,4 @@ impl fmt::Display for Ast {
       Ast::EmptyProgram => write!(f, "()"),
     }
   }
-}
-
-pub(crate) fn build(pair: pest::iterators::Pair<Rule>) -> Ast {
-  fn build_ast(pair: pest::iterators::Pair<Rule>) -> Ast {
-    match pair.as_rule() {
-      Rule::number => Ast::Number(
-        pair
-          .as_str()
-          .parse()
-          .expect("We expect to only get valid numbers here"),
-      ),
-
-      Rule::string => Ast::Str(pair.as_str().to_owned()),
-
-      Rule::symbol => Ast::Symbol(pair.as_str().to_owned()),
-
-      Rule::sexpression => {
-        let res = pair.into_inner().map(build_ast).collect();
-        Ast::SExpression(res)
-      }
-
-      Rule::qexpression => {
-        let res = pair.into_inner().map(build_ast).collect();
-        Ast::QExpression(res)
-      }
-
-      Rule::expression => build_ast(
-        pair
-          .into_inner()
-          .next()
-          .expect("Expressions always consist of one item"),
-      ),
-
-      Rule::program => {
-        let mut pairs = pair.into_inner().peekable();
-        match pairs.peek() {
-          Some(_) => Ast::SExpression(pairs.map(build_ast).collect()),
-          None => Ast::EmptyProgram,
-        }
-      }
-
-      _ => panic!("Unknown parsing rule encountered"),
-    }
-  }
-  build_ast(pair)
 }
