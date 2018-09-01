@@ -1,22 +1,21 @@
 use super::{LFunction, VecDeque};
-use std::{cmp, ptr, fmt};
+use std::{fmt};
 use std::rc::Rc;
 use std::cell::RefCell;
-use env::{Env};
+use env::Env;
+use itertools::Itertools;
 
 pub(crate) enum Ast {
   Number(i64),
   Bool(bool),
   Str(String),
   Builtin(LFunction),
-  //TODO: implement drop on ast so that Function can cleanup their EnvId's in the map!
   Function(Rc<RefCell<Env>>, VecDeque<String>, VecDeque<Ast>),
   Symbol(String),
   SExpression(VecDeque<Ast>),
   QExpression(VecDeque<Ast>),
   EmptyProgram,
 }
-
 
 impl Clone for Ast {
   fn clone(&self) -> Ast {
@@ -29,16 +28,16 @@ impl Clone for Ast {
       //set it's parent to the same parent as the old one
       Ast::Function(env, form, body) => {
         let new_env = Rc::new(RefCell::new(Env::new(Some(Rc::clone(env)))));
-        let new_body = body.into_iter().map(|ast| ast.clone()).collect();
+        let new_body = body.into_iter().cloned().collect();
         Ast::Function(new_env, form.clone(), new_body)
       }
       Ast::Symbol(s) => Ast::Symbol(s.clone()),
       Ast::SExpression(exp) => {
-        let new_exp = exp.into_iter().map(|ast| ast.clone()).collect();
+        let new_exp = exp.into_iter().cloned().collect();
         Ast::SExpression(new_exp)
       }
       Ast::QExpression(exp) => {
-        let new_exp = exp.into_iter().map(|ast| ast.clone()).collect();
+        let new_exp = exp.into_iter().cloned().collect();
         Ast::QExpression(new_exp)
       }
       Ast::EmptyProgram => Ast::EmptyProgram,
@@ -46,77 +45,21 @@ impl Clone for Ast {
   }
 }
 
-//TODO: cleanup!
-impl cmp::PartialEq for Ast {
-  fn eq(&self, other: &Ast) -> bool {
-    if let Ast::Number(mine) = self {
-      if let Ast::Number(other) = other {
-        mine == other
-      } else {
-        false
+impl PartialEq for Ast {
+  fn eq(&self, rhs: &Ast) -> bool {
+    match (self, rhs) {
+      (Ast::Number(a), Ast::Number(b)) => a == b,
+      (Ast::Symbol(a), Ast::Symbol(b)) => a == b,
+      (Ast::SExpression(a), Ast::SExpression(b)) => a == b,
+      (Ast::QExpression(a), Ast::QExpression(b)) => a == b,
+      (Ast::Str(a), Ast::Str(b)) => a == b,
+      (Ast::Bool(a), Ast::Bool(b)) => a == b,
+      (Ast::Builtin(a), Ast::Builtin(b)) => a == b,
+      //NOTE: If we would check the environments too we would have an endless recursion
+      (Ast::Function(_, formals1, body1), Ast::Function(_, formals2, body2)) => {
+        formals1 == formals2 && body1 == body2
       }
-    } else if let Ast::Bool(mine) = self {
-      if let Ast::Bool(other) = other {
-        mine == other
-      } else {
-        false
-      }
-    } else if let Ast::Builtin(mine) = self {
-      if let Ast::Builtin(other) = other {
-        ptr::eq(&mine, &other)
-      } else {
-        false
-      }
-    } else if let Ast::Function(_, mine2, mine3) = self {
-      if let Ast::Function(_, other2, other3) = other {
-        mine2 == other2 && mine3 == other3
-      } else {
-        false
-      }
-    } else if let Ast::Symbol(mine) = self {
-      if let Ast::Symbol(other) = other {
-        mine == other
-      } else {
-        false
-      }
-    } else if let Ast::SExpression(mine) = self {
-      if let Ast::SExpression(other) = other {
-        if mine.len() != other.len() {
-          false
-        } else {
-          for (m, o) in mine.iter().zip(other.iter()) {
-            if m != o {
-              return false;
-            }
-          }
-          true
-        }
-      } else {
-        false
-      }
-    } else if let Ast::Str(mine) = self {
-      if let Ast::Str(other) = other {
-        mine == other
-      } else {
-        false
-      }
-    } else if let Ast::QExpression(mine) = self {
-      if let Ast::QExpression(other) = other {
-        if mine.len() != other.len() {
-          false
-        } else {
-          for (m, o) in mine.iter().zip(other.iter()) {
-            if m != o {
-              return false;
-            }
-          }
-          true
-        }
-      } else {
-        false
-      }
-    } else {
-      true
+      _ => false,
     }
   }
 }
@@ -127,55 +70,18 @@ impl fmt::Display for Ast {
       Ast::Number(num) => write!(f, "{}", num),
       Ast::Symbol(sym) => write!(f, "{}", sym),
       Ast::SExpression(values) => {
-        let mut res = write!(f, "(");
-        let mut iter = values.into_iter().peekable();
-        while let Some(item) = iter.next() {
-          if iter.peek().is_some() {
-            res = res.and(write!(f, "{} ", item));
-          } else {
-            res = res.and(write!(f, "{}", item));
-          }
-        }
-        res = res.and(write!(f, ")"));
-        res
+        write!(f, "({})", format!("{}", values.into_iter().format(" ")))
       }
       Ast::Str(s) => write!(f, "{}", s),
       Ast::Bool(b) => write!(f, "{}", b),
       Ast::Builtin(_) => write!(f, "<builtin>"),
       Ast::Function(_, formals, body) => {
-        let mut res = write!(f, "(\\ {{");
-        let mut formals = formals.into_iter().peekable();
-        while let Some(formal) = formals.next() {
-          if formals.peek().is_some() {
-            res = res.and(write!(f, "{} ", formal));
-          } else {
-            res = res.and(write!(f, "{}", formal));
-          }
-        }
-        res = res.and(write!(f, "}} {{"));
-        let mut body = body.into_iter().peekable();
-        while let Some(bod) = body.next() {
-          if body.peek().is_some() {
-            res = res.and(write!(f, "{} ", bod));
-          } else {
-            res = res.and(write!(f, "{}", bod));
-          }
-        }
-        res = res.and(write!(f, "}})"));
-        res
+        write!(f, "(\\ {{{}}} {{{}}}", 
+               format!("{}", formals.into_iter().format(" ")),
+               format!("{}", body.into_iter().format(" ")))
       }
       Ast::QExpression(values) => {
-        let mut res = write!(f, "{{");
-        let mut iter = values.into_iter().peekable();
-        while let Some(item) = iter.next() {
-          if iter.peek().is_some() {
-            res = res.and(write!(f, "{} ", item));
-          } else {
-            res = res.and(write!(f, "{}", item));
-          }
-        }
-        res = res.and(write!(f, "}}"));
-        res
+        write!(f, "{{{}}}", format!("{}", values.into_iter().format(" ")))
       }
       Ast::EmptyProgram => write!(f, "()"),
     }

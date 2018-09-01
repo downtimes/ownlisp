@@ -1,6 +1,6 @@
 //TODO: Errors at the moment are pretty useless. We definitely need to improve
 //our error reporting so people can actually fix their broken programs
-//TODO split parser with nice interface to it's own module
+//TODO: get rid of the uneccessary clones of RC by passing it as reference
 //TODO: write vscode plugin for language support
 //TODO: treat Strings as Lists of characters to get list functionality on them
 //TODO: To make the language more useful: add GC, add doubles, add user defined types, add os
@@ -14,6 +14,7 @@ extern crate pest_derive;
 extern crate failure;
 #[macro_use]
 extern crate lazy_static;
+extern crate itertools;
 
 mod ast;
 mod env;
