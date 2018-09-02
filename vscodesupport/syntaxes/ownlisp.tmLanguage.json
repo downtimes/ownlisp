@@ -4,29 +4,26 @@
     "scopeName": "source.olp",
     "patterns": [
         {
-            "include": "#keywords"
+            "name": "comment.ownlisp",
+            "match": ";.*"
         },
         {
-            "include": "#strings"
-        }
-    ],
-    "repository": {
-        "keywords": {
-            "patterns": [
-                {
-                    "name": "keyword.operator.ownlisp",
-                    "match": "(\\+|-|/|min|max|\\^|%)"
-                }
-            ]
+            "name": "string.quoted.ownlisp",
+            "begin": "\"",
+            "end": "\""
         },
-        "strings": {
-            "patterns": [
-                {
-                    "name": "string.quoted.double.ownlisp",
-                    "begin": "\"",
-                    "end": "\""
-                }
-            ]
+        {
+            "name": "keyword.control.ownlisp",
+            "match": "if|def|let|head|tail|eval|list|load|error|print|join"
+        },
+        {
+            "name": "keyword.operator.ownlisp",
+            "match": "\\+|\\*|-|/|%|min|max|\\^"
+        },
+        {
+            "name": "constant.language.ownlisp",
+            "match": "true|false"
         }
-    }
+   ]
 }
+    

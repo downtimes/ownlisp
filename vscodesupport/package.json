@@ -1,26 +1,23 @@
 {
 	"name": "ownlisp",
-	"displayName": "ownlisp",
-	"description": "pestfile Syntax Highlighting",
+	"displayName": "Ownlisp",
+	"description": "Ownlisp Syntax Highlighting",
 	"version": "0.0.1",
-	"publisher": "xoronic",
-	"repository": {
-		"url": "https://github.com/Xoronic/pest-Syntax-Highlighting-for-vscode",
-		"type": "git"
-	},
+	"publisher": "Michael Auracher",
 	"engines": {
-		"vscode": "^1.21.0"
+		"vscode": "^1.20.0"
 	},
+	"licence": "MIT",
 	"categories": [
-		"Languages"
+		"Programming Languages"
 	],
 	"contributes": {
 		"languages": [
 			{
 				"id": "ownlisp",
 				"aliases": [
-					"pestfile",
-					"pestfile"
+					"ownlisp",
+					"Ownlisp"
 				],
 				"extensions": [
 					".olp"
@@ -31,8 +28,8 @@
 		"grammars": [
 			{
 				"language": "ownlisp",
-				"scopeName": "source.ownlisp",
-				"path": "./syntaxes/pestfile.tmLanguage.json"
+				"scopeName": "source.olp",
+				"path": "./syntaxes/ownlisp.tmLanguage.json"
 			}
 		]
 	}
