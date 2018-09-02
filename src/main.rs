@@ -71,7 +71,7 @@ lazy_static! {
 }
 
 type OwnlispResult = Result<Ast, failure::Error>;
-type LFunction = fn(VecDeque<Ast>, Rc<RefCell<Env>>) -> OwnlispResult;
+type LFunction = fn(VecDeque<Ast>, &Rc<RefCell<Env>>) -> OwnlispResult;
 
 mod editline {
   use std::io::{self, Write};
@@ -96,18 +96,18 @@ mod editline {
   }
 }
 
-fn evaluate_eval(args: VecDeque<Ast>, env: Rc<RefCell<Env>>) -> OwnlispResult {
+fn evaluate_eval(args: VecDeque<Ast>, env: &Rc<RefCell<Env>>) -> OwnlispResult {
   let mut args = args;
   if args.len() != 1 {
     bail!("Eval only works on a single Q-Expression as argument.")
   } else {
     let qexpr = evaluate(
       args.pop_front().expect("We checked for size."),
-      Rc::clone(&env)
+      env
     )?;
     //unpack the QExpression
     if let Ast::QExpression(list) = qexpr {
-      evaluate(Ast::SExpression(list), Rc::clone(&env))
+      evaluate(Ast::SExpression(list), env)
     } else {
       bail!("Eval only works with QExpression as argument.")
     }
@@ -116,7 +116,7 @@ fn evaluate_eval(args: VecDeque<Ast>, env: Rc<RefCell<Env>>) -> OwnlispResult {
 
 fn evaluate_lambda(
   args: VecDeque<Ast>,
-  env: Rc<RefCell<Env>>,
+  env: &Rc<RefCell<Env>>,
 ) -> OwnlispResult {
   //Check that we have two arguments and both are QExpressions
   if args.len() != 2 {
@@ -140,7 +140,7 @@ fn evaluate_lambda(
       _ => Err(format_err!("Cannot define non-symbol")),
     });
   let formals = formals.collect::<Result<VecDeque<_>, _>>()?;
-  let func_env = Rc::new(RefCell::new(Env::new(Some(Rc::clone(&env)))));
+  let func_env = Rc::new(RefCell::new(Env::new(Some(Rc::clone(env)))));
   Ok(Ast::Function(
     func_env,
     formals,
@@ -153,7 +153,7 @@ enum VarType {
   Local,
 }
 
-fn evaluate_var(args: VecDeque<Ast>, env: Rc<RefCell<Env>>, var_type: VarType) -> OwnlispResult {
+fn evaluate_var(args: VecDeque<Ast>, env: &Rc<RefCell<Env>>, var_type: VarType) -> OwnlispResult {
   let mut args = args;
   match args.pop_front() {
     None => bail!("The def function needs two arguments!"),
@@ -186,11 +186,11 @@ fn evaluate_var(args: VecDeque<Ast>, env: Rc<RefCell<Env>>, var_type: VarType) -
   }
 }
 
-fn evaluate_def(args: VecDeque<Ast>, env: Rc<RefCell<Env>>) -> OwnlispResult {
+fn evaluate_def(args: VecDeque<Ast>, env: &Rc<RefCell<Env>>) -> OwnlispResult {
   evaluate_var(args, env, VarType::Global)
 }
 
-fn evaluate_put(args: VecDeque<Ast>, env: Rc<RefCell<Env>>) -> OwnlispResult {
+fn evaluate_put(args: VecDeque<Ast>, env: &Rc<RefCell<Env>>) -> OwnlispResult {
   evaluate_var(args, env, VarType::Local)
 }
 
@@ -205,7 +205,6 @@ fn get_variadic_part(formals: &mut VecDeque<String>) -> Result<String, failure::
   Ok(rest_formal)
 }
 
-//TODO: bug in the evaluation of variadic stuff ..
 fn evaluate_fun(
   env: Rc<RefCell<Env>>,
   formals: VecDeque<String>,
@@ -224,7 +223,7 @@ fn evaluate_fun(
     //Special case for variadic parameters
     if formal == ":" {
       let rest_formal = get_variadic_part(&mut formals)?;
-      let args = lists::list(arguments, Rc::clone(&env))?;
+      let args = lists::list(arguments, &env)?;
       env.borrow_mut().put_local(rest_formal, args);
       break;
     //normal assignment
@@ -244,13 +243,13 @@ fn evaluate_fun(
   if formals.is_empty() {
     //evaluate the body
     let body = Ast::SExpression(body);
-    evaluate(body, env)
+    evaluate(body, &env)
   } else {
     Ok(Ast::Function(env, formals, body))
   }
 }
 
-fn evaluate_sexpression(ast: Ast, env: Rc<RefCell<Env>>) -> OwnlispResult {
+fn evaluate_sexpression(ast: Ast, env: &Rc<RefCell<Env>>) -> OwnlispResult {
   let sexp = match ast {
     Ast::SExpression(sexp) => sexp,
     _ => panic!("called it wrong!"),
@@ -258,7 +257,7 @@ fn evaluate_sexpression(ast: Ast, env: Rc<RefCell<Env>>) -> OwnlispResult {
   //Evaluate all arguments and if we have any errors bail out
   let mut sexp: VecDeque<_> = sexp
     .into_iter()
-    .map(|exp| evaluate(exp, Rc::clone(&env)))
+    .map(|exp| evaluate(exp, env))
     .collect::<Result<_, _>>()?;
   if sexp.len() == 1 {
     Ok(sexp.pop_front().expect("We checked the length!"))
@@ -277,7 +276,7 @@ fn evaluate_sexpression(ast: Ast, env: Rc<RefCell<Env>>) -> OwnlispResult {
   }
 }
 
-fn evaluate(program: Ast, env: Rc<RefCell<Env>>) -> OwnlispResult {
+fn evaluate(program: Ast, env: &Rc<RefCell<Env>>) -> OwnlispResult {
   match program {
     Ast::Symbol(sym) => {
       //TODO: crashes because of double borrow!
@@ -307,7 +306,7 @@ fn main() {
     }
     match parser::parse_to_ast(line) {
       Ok(mut ast) => {
-        let evaluated = evaluate(ast, Rc::clone(&env));
+        let evaluated = evaluate(ast, &env);
         match evaluated {
           Ok(result) => println!("{}", result),
           Err(err) => println!("{}", err),

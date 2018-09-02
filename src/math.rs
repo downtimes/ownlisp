@@ -40,7 +40,7 @@ fn apply_op(op: &str, x: i64, y: i64) -> Result<i64, failure::Error> {
 
 macro_rules! create_evaluate_math {
   ($name:ident, $op:expr) => {
-    pub(crate) fn $name(args: VecDeque<Ast>, _env: Rc<RefCell<Env>>) -> OwnlispResult {
+    pub(crate) fn $name(args: VecDeque<Ast>, _env: &Rc<RefCell<Env>>) -> OwnlispResult {
       evaluate($op, args)
     }
   };

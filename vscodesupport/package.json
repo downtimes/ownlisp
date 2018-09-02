@@ -1,33 +1,39 @@
 {
-    "name": "ownlisp",
-    "displayName": "Ownlisp",
-    "version": "0.0.1",
-    "description": "Adds support for the Ownlisp language",
-    "author": {
-        "name": "Michael Auracher"
-    },
-    "categories": [
-        "Programming Languages"
-    ],
-    "activationEvents": [
-        "onLanguage:ownlisp"
-    ],
-    "contributes": {
-        "languages": [
-            {
-                "id": "ownlisp",
-                "configuration": "./language-configuration.json",
-                "extensions": [
-                    ".olp"
-                ]
-            }
-        ],
-        "grammars": [
-            {
-                "language": "ownlisp",
-                "scopeName": "source.ownlisp",
-                "path": "./syntaxes/ownlisp.tmLanguage.json"
-            }
-        ]
-    }
+	"name": "ownlisp",
+	"displayName": "ownlisp",
+	"description": "pestfile Syntax Highlighting",
+	"version": "0.0.1",
+	"publisher": "xoronic",
+	"repository": {
+		"url": "https://github.com/Xoronic/pest-Syntax-Highlighting-for-vscode",
+		"type": "git"
+	},
+	"engines": {
+		"vscode": "^1.21.0"
+	},
+	"categories": [
+		"Languages"
+	],
+	"contributes": {
+		"languages": [
+			{
+				"id": "ownlisp",
+				"aliases": [
+					"pestfile",
+					"pestfile"
+				],
+				"extensions": [
+					".olp"
+				],
+				"configuration": "./language-configuration.json"
+			}
+		],
+		"grammars": [
+			{
+				"language": "ownlisp",
+				"scopeName": "source.ownlisp",
+				"path": "./syntaxes/pestfile.tmLanguage.json"
+			}
+		]
+	}
 }

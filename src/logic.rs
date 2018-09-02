@@ -14,7 +14,7 @@ pub const OP_IF: &str = "if";
 pub const TRUE: &str = "true";
 pub const FALSE: &str = "false";
 
-pub(crate) fn evaluate_if(args: VecDeque<Ast>, env: Rc<RefCell<Env>>) -> OwnlispResult {
+pub(crate) fn evaluate_if(args: VecDeque<Ast>, env: &Rc<RefCell<Env>>) -> OwnlispResult {
   if args.len() != 3 {
     bail!("If needs three arguments!")
   }
@@ -38,7 +38,7 @@ pub(crate) fn evaluate_if(args: VecDeque<Ast>, env: Rc<RefCell<Env>>) -> Ownlisp
   }
 }
 
-pub(crate) fn not_equal(args: VecDeque<Ast>, env: Rc<RefCell<Env>>) -> OwnlispResult {
+pub(crate) fn not_equal(args: VecDeque<Ast>, env: &Rc<RefCell<Env>>) -> OwnlispResult {
   let eq = equal(args, env);
   match eq {
     Ok(Ast::Bool(b)) => Ok(Ast::Bool(!b)),
@@ -46,7 +46,7 @@ pub(crate) fn not_equal(args: VecDeque<Ast>, env: Rc<RefCell<Env>>) -> OwnlispRe
   }
 }
 
-pub(crate) fn equal(args: VecDeque<Ast>, _env: Rc<RefCell<Env>>) -> OwnlispResult {
+pub(crate) fn equal(args: VecDeque<Ast>, _env: &Rc<RefCell<Env>>) -> OwnlispResult {
   if args.len() != 2 {
     bail!("The equality operator only works with two arguments!")
   }
@@ -57,7 +57,7 @@ pub(crate) fn equal(args: VecDeque<Ast>, _env: Rc<RefCell<Env>>) -> OwnlispResul
 
 macro_rules! create_evalate_order {
   ($name:ident, $op:expr) => {
-    pub(crate) fn $name(args: VecDeque<Ast>, _env: Rc<RefCell<Env>>) -> OwnlispResult {
+    pub(crate) fn $name(args: VecDeque<Ast>, _env: &Rc<RefCell<Env>>) -> OwnlispResult {
       evaluate($op, args)
     }
   };

@@ -17,7 +17,7 @@ pub const ERROR: &str = "error";
 
 pub(crate) fn print(
   args: VecDeque<Ast>,
-  _env: Rc<RefCell<Env>>,
+  _env: &Rc<RefCell<Env>>,
 ) -> OwnlispResult {
   let mut args = args;
   match args.pop_front() {
@@ -34,7 +34,7 @@ pub(crate) fn print(
 
 pub(crate) fn error(
   args: VecDeque<Ast>,
-  _env: Rc<RefCell<Env>>,
+  _env: &Rc<RefCell<Env>>,
 ) -> OwnlispResult {
   let mut args = args;
   match args.pop_front() {
@@ -50,7 +50,7 @@ pub(crate) fn error(
 
 pub(crate) fn load_ownlisp(
   args: VecDeque<Ast>,
-  env: Rc<RefCell<Env>>,
+  env: &Rc<RefCell<Env>>,
 ) -> OwnlispResult {
   let mut args = args;
   match args.pop_front() {
@@ -70,7 +70,7 @@ pub(crate) fn load_ownlisp(
         Ok(mut ast) => {
           if let Ast::SExpression(sexp) = ast {
             for expr in sexp.into_iter() {
-              match evaluate(expr, Rc::clone(&env)) {
+              match evaluate(expr, env) {
                 Ok(_) => continue,
                 Err(e) => return Err(e),
               }

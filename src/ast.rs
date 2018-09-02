@@ -1,6 +1,7 @@
 use super::{LFunction, VecDeque};
-use std::{fmt};
+use std::fmt;
 use std::rc::Rc;
+use std::ptr;
 use std::cell::RefCell;
 use env::Env;
 use itertools::Itertools;
@@ -54,7 +55,7 @@ impl PartialEq for Ast {
       (Ast::QExpression(a), Ast::QExpression(b)) => a == b,
       (Ast::Str(a), Ast::Str(b)) => a == b,
       (Ast::Bool(a), Ast::Bool(b)) => a == b,
-      (Ast::Builtin(a), Ast::Builtin(b)) => a == b,
+      (Ast::Builtin(a), Ast::Builtin(b)) => ptr::eq(a, b),
       //NOTE: If we would check the environments too we would have an endless recursion
       (Ast::Function(_, formals1, body1), Ast::Function(_, formals2, body2)) => {
         formals1 == formals2 && body1 == body2

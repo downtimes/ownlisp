@@ -19,7 +19,7 @@
 
 (fun {comp f g x} {
   f (g x)
-})
+}
 
 ;several things in sequence
 (fun {do:args} {
