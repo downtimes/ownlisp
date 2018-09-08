@@ -73,7 +73,7 @@ impl fmt::Display for Ast {
       Ast::SExpression(values) => {
         write!(f, "({})", format!("{}", values.into_iter().format(" ")))
       }
-      Ast::Str(s) => write!(f, "{}", s),
+      Ast::Str(s) => write!(f, "\"{}\"", s),
       Ast::Bool(b) => write!(f, "{}", b),
       Ast::Builtin(_) => write!(f, "<builtin>"),
       Ast::Function(_, formals, body) => {

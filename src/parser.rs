@@ -12,10 +12,9 @@ const _GRAMMAR: &str = include_str!("ownlisp.pest");
 struct OwnlispParser;
 
 pub(crate) fn parse_to_ast(input: &str) -> Result<Ast, failure::Error> {
-  //TOOD: do some really nice error output formating from this part!
   let mut pairs = match OwnlispParser::parse(Rule::program, input) {
     Ok(pairs) => pairs,
-    Err(e) => bail!("{:?}", e),
+    Err(e) => bail!("{}", e),
   };
 
   fn build_ast(pair: pest::iterators::Pair<Rule>) -> Ast {
@@ -27,7 +26,7 @@ pub(crate) fn parse_to_ast(input: &str) -> Result<Ast, failure::Error> {
           .expect("We expect to only get valid numbers here"),
       ),
 
-      Rule::string => Ast::Str(pair.as_str().to_owned()),
+      Rule::string => Ast::Str(pair.as_str().trim_matches('"').to_owned()),
 
       Rule::symbol => Ast::Symbol(pair.as_str().to_owned()),
 

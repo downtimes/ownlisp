@@ -1,7 +1,5 @@
 //TODO: Errors at the moment are pretty useless. We definitely need to improve
 //our error reporting so people can actually fix their broken programs
-//TODO: get rid of the uneccessary clones of RC by passing it as reference
-//TODO: write vscode plugin for language support
 //TODO: treat Strings as Lists of characters to get list functionality on them
 //TODO: To make the language more useful: add GC, add doubles, add user defined types, add os
 //interaction layer, add tail call optimization, type inferance, lexical scoping
@@ -279,7 +277,6 @@ fn evaluate_sexpression(ast: Ast, env: &Rc<RefCell<Env>>) -> OwnlispResult {
 fn evaluate(program: Ast, env: &Rc<RefCell<Env>>) -> OwnlispResult {
   match program {
     Ast::Symbol(sym) => {
-      //TODO: crashes because of double borrow!
       if let Some(ast) = env.borrow_mut().get(&sym) {
         Ok(ast)
       } else {
