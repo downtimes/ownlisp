@@ -1,14 +1,14 @@
-program = {soi ~ (expression+)? ~ eoi}
+program = {SOI ~ (expression+)? ~ EOI}
 sexpression = { "(" ~ expression* ~ ")" }
 qexpression = { "{" ~ expression* ~ "}"}
 expression = { number | symbol | sexpression | qexpression | string }
 number = @{"-"? ~ digit+}
 symbol = @{symbols+ | ":"}
 string = @{ "\"" ~ not_quote_marks* ~ "\"" }
-not_quote_marks = _{ !("\"") ~ any }
+not_quote_marks = _{ !("\"") ~ ANY }
 symbols = _{'a'..'z' | 'A'..'Z' | '0'..'9' | "_" | "+" | "/" | "*" | "-" | "\\" 
         | "=" | "<" | ">" | "!" | "|" | "&" } 
 digit = _{'0'..'9'}
 
-whitespace = _{" " | "\n" | "\r\n" }
-comment = _{ ";" ~ (!("\n" | "\r\n") ~ any)* }
+WHITESPACE = _{" " | NEWLINE }
+COMMENT = _{ ";" ~ (!NEWLINE ~ ANY)* }

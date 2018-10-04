@@ -55,7 +55,13 @@ pub(crate) fn parse_to_ast(input: &str) -> Result<Ast, failure::Error> {
         }
       }
 
-      _ => panic!("Unknown parsing rule encountered"),
+      //TODO(MA): Search for the reason EOI is now a rule instead of silently
+      //          ignored.
+      Rule::EOI => Ast::EmptyProgram,
+      _ => {
+        println!("{:?}", pair);
+        panic!("Unknown parsing rule encountered");
+      }
     }
   }
   Ok(build_ast(pairs.next().unwrap()))
