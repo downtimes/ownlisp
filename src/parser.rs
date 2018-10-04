@@ -1,4 +1,6 @@
 use pest::{self, Parser};
+use itertools::Itertools;
+use std::collections::VecDeque;
 use failure;
 use ast::*;
 
@@ -48,16 +50,15 @@ pub(crate) fn parse_to_ast(input: &str) -> Result<Ast, failure::Error> {
       ),
 
       Rule::program => {
-        let mut pairs = pair.into_inner().peekable();
-        match pairs.peek() {
-          Some(_) => Ast::SExpression(pairs.map(build_ast).collect()),
-          None => Ast::EmptyProgram,
+        let pairs = pair.into_inner();
+        let elems: VecDeque<_> = pairs.dropping_back(1).map(build_ast).collect();
+        if elems.is_empty() {
+          Ast::EmptyProgram
+        } else {
+          Ast::SExpression(elems)
         }
       }
 
-      //TODO(MA): Search for the reason EOI is now a rule instead of silently
-      //          ignored.
-      Rule::EOI => Ast::EmptyProgram,
       _ => {
         println!("{:?}", pair);
         panic!("Unknown parsing rule encountered");
