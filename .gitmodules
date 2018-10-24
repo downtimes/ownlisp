@@ -1,3 +1,3 @@
 [submodule "editline"]
 	path = editline
-	url = //192.168.178.22/downtimes/LinuxWorkspace/ownlisp/editline
+	url = git@github.com:downtimes/rust-editline.git
