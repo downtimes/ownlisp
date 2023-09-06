@@ -1,6 +1,7 @@
 [package]
 name = "ownlisp"
-version = "0.0.7"
+version = "0.0.8"
+edition = "2021"
 authors = ["Michael Auracher <michael.auracher@gmail.com>"]
 
 [profile.dev]
@@ -11,8 +12,8 @@ debug = true
 editline = { path = "editline" }
 
 [dependencies]
-itertools = "0.7.8"
-lazy_static = "1.1"
-pest = "2.0"
-pest_derive = "2.0"
-failure = "0.1.2"
+itertools = "0.11"
+lazy_static = "1.4"
+pest = "2.7"
+pest_derive = "2.7"
+anyhow = "1.0"

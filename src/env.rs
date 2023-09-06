@@ -2,10 +2,9 @@ use super::{
     evaluate_def, evaluate_eval, evaluate_lambda, evaluate_put, OP_DEF, OP_EVAL, OP_LAMBDA, OP_PUT,
 };
 use super::{lists, logic, math, strings, Ast};
+use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
-use std::cell::RefCell;
-
 
 pub(crate) struct Env {
     parent: Option<Rc<RefCell<Env>>>,
@@ -15,24 +14,23 @@ pub(crate) struct Env {
 impl Env {
     pub(crate) fn new(parent: Option<Rc<RefCell<Env>>>) -> Env {
         Env {
-            parent: parent,
+            parent,
             map: HashMap::new(),
         }
     }
 
     pub(crate) fn put_global(&mut self, key: String, value: Ast) {
-        match self.parent.is_some() {
-            true => {
-                let mut parent = self.parent.clone();
-                while let Some(env) = parent {
-                    if env.borrow().parent.is_none() {
-                        env.borrow_mut().put_local(key, value);
-                        break;
-                    }
-                    parent = env.borrow().parent.clone();
+        if self.parent.is_some() {
+            let mut parent = self.parent.clone();
+            while let Some(env) = parent {
+                if env.borrow().parent.is_none() {
+                    env.borrow_mut().put_local(key, value);
+                    break;
                 }
+                parent = env.borrow().parent.clone();
             }
-            false => self.put_local(key, value),
+        } else {
+            self.put_local(key, value);
         }
     }
 
